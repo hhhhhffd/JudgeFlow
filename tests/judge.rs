@@ -393,3 +393,111 @@ async fn score_batch_notifies_scores_once() {
     assert_eq!(rx.try_recv().unwrap(), judgeflow::sse::ChangeKind::Scores);
     assert!(rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn deleted_score_is_a_tombstone_that_blocks_older_edits() {
+    let fx = Fixture::new(1, true).await;
+    let t = now_ms() - 10_000;
+    fx.put_scores(0, json!([item(&fx, 0, 0, json!(700), t)]))
+        .await;
+    assert_eq!(
+        statuses(
+            &fx.put_scores(0, json!([item(&fx, 0, 0, Value::Null, t + 2000)]))
+                .await
+        ),
+        ["ok"]
+    );
+
+    // An older offline edit from another device must not resurrect the score.
+    let stale = fx
+        .put_scores(0, json!([item(&fx, 0, 0, json!(300), t + 1000)]))
+        .await;
+    assert_eq!(statuses(&stale), ["stale"]);
+    assert_eq!(
+        stale.body["results"][0]["server"],
+        json!({ "value_x100": null, "note": null, "edited_at": t + 2000 })
+    );
+    let session = fx.judge(0, Method::GET, "/judge/session", None).await;
+    assert!(session.body["scores"].as_array().unwrap().is_empty());
+
+    // A newer edit wins over the tombstone.
+    assert_eq!(
+        statuses(
+            &fx.put_scores(0, json!([item(&fx, 0, 0, json!(400), t + 3000)]))
+                .await
+        ),
+        ["ok"]
+    );
+    let session = fx.judge(0, Method::GET, "/judge/session", None).await;
+    assert_eq!(session.body["scores"][0]["value_x100"], 400);
+}
+
+#[tokio::test]
+async fn tombstones_are_not_counted_anywhere() {
+    let fx = Fixture::new(1, true).await;
+    let t = now_ms() - 10_000;
+    fx.put_scores(
+        0,
+        json!([
+            item(&fx, 0, 0, json!(100), t),
+            item(&fx, 0, 1, json!(100), t),
+            item(&fx, 1, 0, json!(100), t),
+            item(&fx, 1, 1, json!(100), t)
+        ]),
+    )
+    .await;
+    fx.put_scores(0, json!([item(&fx, 1, 1, Value::Null, t + 1)]))
+        .await;
+
+    let judge = fx.event().await["judges"][0].clone();
+    assert_eq!(judge["scored_count"], 3);
+
+    let matrix = fx
+        .admin(
+            Method::GET,
+            &format!("/events/{}/matrix", fx.event_id),
+            None,
+        )
+        .await;
+    let cell = matrix.body["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["team_id"] == fx.team_ids[1])
+        .unwrap();
+    assert_eq!(cell["scored"], 1);
+
+    let incomplete = fx.judge(0, Method::POST, "/judge/submit", None).await;
+    assert_eq!(incomplete.status, StatusCode::CONFLICT);
+    assert_eq!(
+        incomplete.body["details"]["missing"],
+        json!([{ "team_id": fx.team_ids[1], "criterion_id": fx.criterion_ids[1] }])
+    );
+
+    let mut conn = fx.state.pool.acquire().await.unwrap();
+    let event = judgeflow::domain::load_event(&mut conn, &fx.event_id)
+        .await
+        .unwrap();
+    let input = judgeflow::domain::ranking_input(&mut conn, &event)
+        .await
+        .unwrap();
+    assert_eq!(input.scores.len(), 3);
+}
+
+#[tokio::test]
+async fn migrations_apply_on_a_fresh_database() {
+    let fx = Fixture::new(1, true).await;
+    let nullable: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('scores') WHERE name = 'value_x100' AND \"notnull\" = 0")
+            .fetch_one(&fx.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(nullable, 1);
+    let indexes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('scores_team_id', 'scores_criterion_id')",
+    )
+    .fetch_one(&fx.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(indexes, 2);
+}

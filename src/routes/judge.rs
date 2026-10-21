@@ -44,7 +44,8 @@ async fn session(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<Js
             .fetch_one(&mut *conn)
             .await?;
     let scores: Vec<(String, String, i64, Option<String>, i64)> = sqlx::query_as(
-        "SELECT team_id, criterion_id, value_x100, note, edited_at FROM scores WHERE judge_id = ?",
+        "SELECT team_id, criterion_id, value_x100, note, edited_at FROM scores \
+         WHERE judge_id = ? AND value_x100 IS NOT NULL",
     )
     .bind(&auth.judge_id)
     .fetch_all(&mut *conn)
@@ -182,7 +183,7 @@ async fn put_scores(
             continue;
         }
 
-        let existing: Option<(i64, Option<String>, i64)> = sqlx::query_as(
+        let existing: Option<(Option<i64>, Option<String>, i64)> = sqlx::query_as(
             "SELECT value_x100, note, edited_at FROM scores \
              WHERE judge_id = ? AND team_id = ? AND criterion_id = ?",
         )
@@ -220,13 +221,20 @@ async fn put_scores(
                 .execute(&mut *tx)
                 .await?;
             }
+            // Tombstone: keeps edited_at so an older offline edit cannot resurrect the score.
             None => {
                 sqlx::query(
-                    "DELETE FROM scores WHERE judge_id = ? AND team_id = ? AND criterion_id = ?",
+                    "INSERT INTO scores (judge_id, team_id, criterion_id, value_x100, note, edited_at, updated_at) \
+                     VALUES (?, ?, ?, NULL, NULL, ?, ?) \
+                     ON CONFLICT (judge_id, team_id, criterion_id) DO UPDATE SET \
+                     value_x100 = NULL, note = NULL, \
+                     edited_at = excluded.edited_at, updated_at = excluded.updated_at",
                 )
                 .bind(&auth.judge_id)
                 .bind(&item.team_id)
                 .bind(&item.criterion_id)
+                .bind(item.edited_at)
+                .bind(now)
                 .execute(&mut *tx)
                 .await?;
             }
@@ -266,7 +274,7 @@ async fn submit(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<Jso
         return Ok(Json(judge_json(&auth, submitted_at)));
     }
     let scored: HashSet<(String, String)> = sqlx::query_as::<_, (String, String)>(
-        "SELECT team_id, criterion_id FROM scores WHERE judge_id = ?",
+        "SELECT team_id, criterion_id FROM scores WHERE judge_id = ? AND value_x100 IS NOT NULL",
     )
     .bind(&auth.judge_id)
     .fetch_all(&mut *tx)

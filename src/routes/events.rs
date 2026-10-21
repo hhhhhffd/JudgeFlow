@@ -664,7 +664,8 @@ async fn matrix(
         .await?;
     let counts: HashMap<(String, String), i64> = sqlx::query_as::<_, (String, String, i64)>(
         "SELECT s.judge_id, s.team_id, COUNT(*) FROM scores s \
-         JOIN judges j ON j.id = s.judge_id WHERE j.event_id = ? GROUP BY s.judge_id, s.team_id",
+         JOIN judges j ON j.id = s.judge_id WHERE j.event_id = ? AND s.value_x100 IS NOT NULL \
+         GROUP BY s.judge_id, s.team_id",
     )
     .bind(&id)
     .fetch_all(&mut *conn)

@@ -149,7 +149,7 @@ pub async fn load_judges(
 ) -> AppResult<Vec<JudgeSummary>> {
     Ok(sqlx::query_as::<_, JudgeSummary>(
         "SELECT j.id, j.name, j.is_active, j.submitted_at, j.last_seen_at, j.pending_count, \
-         (SELECT COUNT(*) FROM scores s WHERE s.judge_id = j.id) AS scored_count \
+         (SELECT COUNT(*) FROM scores s WHERE s.judge_id = j.id AND s.value_x100 IS NOT NULL) AS scored_count \
          FROM judges j WHERE j.event_id = ? ORDER BY j.created_at, j.rowid",
     )
     .bind(event_id)
@@ -163,7 +163,7 @@ pub async fn load_judge_summary(
 ) -> AppResult<JudgeSummary> {
     sqlx::query_as::<_, JudgeSummary>(
         "SELECT j.id, j.name, j.is_active, j.submitted_at, j.last_seen_at, j.pending_count, \
-         (SELECT COUNT(*) FROM scores s WHERE s.judge_id = j.id) AS scored_count \
+         (SELECT COUNT(*) FROM scores s WHERE s.judge_id = j.id AND s.value_x100 IS NOT NULL) AS scored_count \
          FROM judges j WHERE j.id = ?",
     )
     .bind(judge_id)
@@ -198,7 +198,8 @@ pub async fn ranking_input(conn: &mut SqliteConnection, event: &Event) -> AppRes
     .await?;
     let scores: Vec<(String, String, String, i64)> = sqlx::query_as(
         "SELECT s.judge_id, s.team_id, s.criterion_id, s.value_x100 FROM scores s \
-         JOIN judges j ON j.id = s.judge_id WHERE j.event_id = ?",
+         JOIN judges j ON j.id = s.judge_id \
+         WHERE j.event_id = ? AND s.value_x100 IS NOT NULL",
     )
     .bind(&event.id)
     .fetch_all(&mut *conn)
