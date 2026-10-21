@@ -737,16 +737,115 @@ async fn matrix_counts_decided_comparisons_without_a_total() {
     assert_eq!(scored(1), 2);
 }
 
+async fn import_sheet(fx: &Fixture, body: Value) -> Resp {
+    fx.admin(
+        Method::POST,
+        &format!("/events/{}/import-sheet", fx.event_id),
+        Some(body),
+    )
+    .await
+}
+
+fn sheet(fx: &Fixture, idx: usize, key: &str, items: Value) -> Value {
+    json!({ "format": "judgeflow-sheet/1", "token": fx.judges[idx].1, key: items })
+}
+
 #[tokio::test]
-async fn sheet_import_is_not_available_for_pairwise_events() {
-    let fx = pairwise(1, &[], true).await;
-    let resp = fx
-        .admin(
-            Method::POST,
-            &format!("/events/{}/import-sheet", fx.event_id),
-            Some(json!({ "format": "judgeflow-sheet/1", "token": fx.judges[0].1, "items": [] })),
-        )
+async fn sheet_import_applies_comparisons_like_put_comparisons() {
+    let fx = pairwise(2, &["Вега"], true).await;
+    let open = comparisons(&reserve(&fx, 0, 1).await);
+    let other = comparisons(&reserve(&fx, 1, 1).await);
+    let t = now_ms() - 10_000;
+
+    let resp = import_sheet(
+        &fx,
+        sheet(
+            &fx,
+            0,
+            "comparisons",
+            json!([
+                { "id": open[0]["id"], "winner": "a", "edited_at": t },
+                { "id": other[0]["id"], "winner": "a", "edited_at": t },
+            ]),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    assert_eq!(resp.body["results"][0]["status"], "ok", "{:?}", resp.body);
+    assert_eq!(resp.body["results"][0]["id"], open[0]["id"]);
+    // Another judge's comparison is not visible to this token.
+    assert_eq!(resp.body["results"][1]["status"], "rejected");
+    assert_eq!(resp.body["results"][1]["error"], "not_found");
+
+    let resp = import_sheet(
+        &fx,
+        sheet(
+            &fx,
+            0,
+            "comparisons",
+            json!([{ "id": open[0]["id"], "winner": "b", "edited_at": t - 1 }]),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    assert_eq!(resp.body["results"][0]["status"], "stale");
+    assert_eq!(
+        resp.body["results"][0]["server"],
+        json!({ "winner": "a", "edited_at": t })
+    );
+
+    let audit = fx
+        .admin(Method::GET, &format!("/events/{}/audit", fx.event_id), None)
         .await;
+    assert_eq!(audit.status, StatusCode::OK);
+    assert!(!audit.text().contains(&fx.judges[0].1));
+}
+
+#[tokio::test]
+async fn sheet_import_of_comparisons_is_rejected_after_finalize() {
+    let fx = pairwise(1, &[], true).await;
+    let open = comparisons(&reserve(&fx, 0, 1).await);
+    decide_by_order(&fx, 0, &open).await;
+    finalize(&fx).await;
+    let resp = import_sheet(
+        &fx,
+        sheet(
+            &fx,
+            0,
+            "comparisons",
+            json!([{ "id": open[0]["id"], "winner": "a", "edited_at": now_ms() }]),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::CONFLICT, "{:?}", resp.body);
+}
+
+#[tokio::test]
+async fn sheet_import_rejects_mixing_items_and_comparisons() {
+    let fx = pairwise(1, &[], true).await;
+    let resp = import_sheet(
+        &fx,
+        sheet(
+            &fx,
+            0,
+            "items",
+            json!([{ "team_id": fx.team_ids[0], "criterion_id": "x", "value_x100": 100, "edited_at": now_ms() }]),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::BAD_REQUEST, "{:?}", resp.body);
+
+    let rubric = Fixture::new(1, true).await;
+    let resp = import_sheet(
+        &rubric,
+        sheet(
+            &rubric,
+            0,
+            "comparisons",
+            json!([{ "id": "x", "winner": "a", "edited_at": now_ms() }]),
+        ),
+    )
+    .await;
     assert_eq!(resp.status, StatusCode::BAD_REQUEST, "{:?}", resp.body);
 }
 

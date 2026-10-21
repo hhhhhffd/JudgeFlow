@@ -475,26 +475,18 @@ fn comparison_rejection(item: &ComparisonItem, error: &str) -> Value {
     json!({ "id": item.id, "status": "rejected", "error": error })
 }
 
-/// Same per-item semantics as scores: last-writer-wins by `edited_at`; `winner: null` clears the
-/// decision but keeps the row (open, with `edited_at`) so an older offline edit cannot resurrect it.
-async fn put_comparisons(
-    State(state): State<AppState>,
-    auth: JudgeAuth,
-    Json(req): Json<ComparisonsRequest>,
-) -> AppResult<Json<Value>> {
-    check_items_count(req.items.len())?;
-    let mut tx = begin_write(&state.pool).await?;
-    let submitted_at: Option<i64> =
-        sqlx::query_scalar("SELECT submitted_at FROM judges WHERE id = ? AND is_active = 1")
-            .bind(&auth.judge_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-    let event = load_event(&mut tx, &auth.event_id).await?;
+/// Shared by `PUT /judge/comparisons` and the emergency sheet import.
+async fn apply_comparison_items(
+    tx: &mut SqliteConnection,
+    event: &Event,
+    judge_id: &str,
+    submitted_at: Option<i64>,
+    items: &[ComparisonItem],
+) -> AppResult<(Vec<Value>, bool)> {
     let now = now_ms();
-    let mut results = Vec::with_capacity(req.items.len());
+    let mut results = Vec::with_capacity(items.len());
     let mut applied = false;
-    for item in &req.items {
+    for item in items {
         if submitted_at.is_some() {
             results.push(comparison_rejection(item, "sheet_submitted"));
             continue;
@@ -514,7 +506,7 @@ async fn put_comparisons(
             "SELECT winner, edited_at FROM comparisons WHERE id = ? AND judge_id = ?",
         )
         .bind(&item.id)
-        .bind(&auth.judge_id)
+        .bind(judge_id)
         .fetch_optional(&mut *tx)
         .await?;
         let Some((server_winner, server_edited_at)) = existing else {
@@ -547,6 +539,27 @@ async fn put_comparisons(
         applied = true;
         results.push(json!({ "id": item.id, "status": "ok" }));
     }
+    Ok((results, applied))
+}
+
+/// Same per-item semantics as scores: last-writer-wins by `edited_at`; `winner: null` clears the
+/// decision but keeps the row (open, with `edited_at`) so an older offline edit cannot resurrect it.
+async fn put_comparisons(
+    State(state): State<AppState>,
+    auth: JudgeAuth,
+    Json(req): Json<ComparisonsRequest>,
+) -> AppResult<Json<Value>> {
+    check_items_count(req.items.len())?;
+    let mut tx = begin_write(&state.pool).await?;
+    let submitted_at: Option<i64> =
+        sqlx::query_scalar("SELECT submitted_at FROM judges WHERE id = ? AND is_active = 1")
+            .bind(&auth.judge_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+    let event = load_event(&mut tx, &auth.event_id).await?;
+    let (results, applied) =
+        apply_comparison_items(&mut tx, &event, &auth.judge_id, submitted_at, &req.items).await?;
     tx.commit().await?;
     if applied {
         state.sse.notify(&event.id, ChangeKind::Scores);
@@ -558,7 +571,11 @@ async fn put_comparisons(
 struct SheetFile {
     format: String,
     token: String,
+    #[serde(default)]
     items: Vec<ScoreItem>,
+    /// Pairwise events only (SPEC section 13).
+    #[serde(default)]
+    comparisons: Vec<ComparisonItem>,
 }
 
 /// Emergency import (SPEC section 12): the organizer uploads a sheet file exported by a judge.
@@ -576,11 +593,18 @@ async fn import_sheet(
         ));
     }
     check_items_count(req.items.len())?;
+    check_items_count(req.comparisons.len())?;
     let mut tx = begin_write(&state.pool).await?;
     let event = load_event(&mut tx, &event_id).await?;
-    if event.scoring_mode == "pairwise" {
+    let pairwise = event.scoring_mode == "pairwise";
+    if pairwise && !req.items.is_empty() {
         return Err(AppError::Validation(
-            "Импорт листа недоступен для попарного сравнения".into(),
+            "Лист попарного сравнения не содержит оценок".into(),
+        ));
+    }
+    if !pairwise && !req.comparisons.is_empty() {
+        return Err(AppError::Validation(
+            "Лист с рубрикой не содержит сравнений".into(),
         ));
     }
     if domain::is_closed(&event.status) {
@@ -599,8 +623,11 @@ async fn import_sheet(
     let (judge_id, judge_name, submitted_at) = judge.ok_or_else(|| {
         AppError::Validation("Токен из файла не относится к судьям этого события".into())
     })?;
-    let (results, applied) =
-        apply_score_items(&mut tx, &event, &judge_id, submitted_at, &req.items).await?;
+    let (results, applied) = if pairwise {
+        apply_comparison_items(&mut tx, &event, &judge_id, submitted_at, &req.comparisons).await?
+    } else {
+        apply_score_items(&mut tx, &event, &judge_id, submitted_at, &req.items).await?
+    };
     let count = |status: &str| results.iter().filter(|r| r["status"] == status).count();
     audit::record(
         &mut *tx,
