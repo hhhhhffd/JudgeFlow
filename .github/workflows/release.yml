@@ -11,6 +11,23 @@ env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: web
+      - run: npm run typecheck && npm test
+        working-directory: web
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
   web:
     runs-on: ubuntu-latest
     steps:
@@ -30,7 +47,7 @@ jobs:
 
   # Native build per architecture (no cross toolchain): musl-gcc compiles the bundled SQLite.
   binary:
-    needs: web
+    needs: [test, web]
     strategy:
       matrix:
         include:
@@ -86,10 +103,12 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
   # Each arch builds its image natively (QEMU-emulated rustc would take far too long),
   # pushes by digest, then `merge` stitches the digests into one multi-arch tag.
   image:
+    needs: test
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -152,7 +171,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - name: Create manifest list
         working-directory: /tmp/digests
         run: |
