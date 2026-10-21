@@ -1,4 +1,4 @@
-.PHONY: web build run dev test lint e2e release-musl docker
+.PHONY: web build run dev test lint e2e loadtest release-musl docker
 
 # The frontend must be built before `cargo build --release`: rust-embed bakes web/dist into the binary.
 web:
@@ -28,6 +28,12 @@ lint:
 e2e: web
 	cargo build
 	cd web && npm run e2e
+
+# Load test against a release binary on a fresh temp data dir and a free port (the script starts and
+# stops the server itself). Needs Node 22+. Tunables: LOADTEST_SECONDS, LOADTEST_JUDGES, LOADTEST_VIEWERS.
+loadtest: web
+	cargo build --release
+	node scripts/loadtest.mjs
 
 # Static x86_64 binary. Needs: rustup target add x86_64-unknown-linux-musl and musl-gcc (musl-tools)
 # for the bundled SQLite.

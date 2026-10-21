@@ -116,6 +116,7 @@ cd web && npm run dev         # Vite с прокси /api → :8080
 make test                     # cargo test + vitest
 make lint                     # fmt, clippy, typecheck, eslint
 make e2e                      # Playwright против реального бинарника
+make loadtest                 # нагрузочный тест (40 судей, 200 зрителей, 60 с), нужен Node 22+
 ```
 
 Структура: `src/` — сервер (Axum, SQLx), `src/ranking.rs` — чистый движок рейтинга, `migrations/` — схема SQLite,
