@@ -20,6 +20,7 @@ import { ScoreInput } from './score-input'
 import {
   cellKey,
   errorRows,
+  rejectedOutsideSheet,
   itemKeys,
   itemLines,
   itemNote,
@@ -72,6 +73,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
   const progress = useMemo(() => overallProgress(teams, criteria, rows), [teams, criteria, rows])
   const pending = pendingCount(rows)
   const rejected = errorRows(rows).length
+  const outsideSheet = useMemo(() => rejectedOutsideSheet(rows, teams, criteria).length, [rows, teams, criteria])
   const indicator = syncIndicator({ online: state.online, syncing: state.syncing, pending, rejected, syncError: state.syncError })
   const alertOpen = event.alert.enabled && event.alert.version > seenAlert
 
@@ -179,6 +181,16 @@ export function Desk({ controller, session }: { controller: DeskController; sess
         </header>
 
         <BackupAlert controller={controller} errorKind={indicator.kind === 'error'} />
+        {outsideSheet > 0 && (
+          <div role="alert" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+            <span className="min-w-0 flex-1">
+              <span className="font-medium">{judgeText.sync.outsideSheet(outsideSheet)}.</span> {judgeText.sync.outsideSheetHint}
+            </span>
+            <Button size="sm" variant="outline" onClick={() => controller.dismissOutsideSheet()}>
+              {judgeText.sync.outsideSheetDismiss}
+            </Button>
+          </div>
+        )}
         {state.storageError && (
           <p role="alert" className="border-b border-warning/30 bg-warning-soft px-4 py-2 text-sm text-warning">
             {state.storageError}

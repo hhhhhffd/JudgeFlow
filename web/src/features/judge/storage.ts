@@ -2,7 +2,7 @@
 // per-judge session cache + score rows (IndexedDB).
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import type { JudgeSession } from '@/api/types'
-import type { LocalComparison } from './pairwise'
+import { adoptedComparisonWins, canOverwriteComparison, type ComparisonRef, type LocalComparison } from './pairwise'
 import { adoptedWins, canDeleteStored, canOverwriteStored, pickOrphanKeys, type LocalRow, type RowRef } from './scoring'
 
 const TOKEN_KEY = 'jf.judge.token'
@@ -56,9 +56,20 @@ interface DeskDB extends DBSchema {
   comparisons: { key: [string, string]; value: LocalComparison & { k: string }; indexes: { byToken: string } }
 }
 
+const OPEN_TIMEOUT_MS = 5000
+
 let dbPromise: Promise<IDBPDatabase<DeskDB>> | null = null
-function db() {
-  dbPromise ??= openDB<DeskDB>('judgeflow-judge', 2, {
+/** The open request is stuck (typically an old tab holds the previous version): fail fast until it settles. */
+let openTimedOut = false
+let blockedListener: ((blocked: boolean) => void) | null = null
+
+/** Reports that the upgrade is waiting for another tab to release the database (and when it stops). */
+export function onStorageBlocked(listener: ((blocked: boolean) => void) | null) {
+  blockedListener = listener
+}
+
+function openDesk(): Promise<IDBPDatabase<DeskDB>> {
+  return openDB<DeskDB>('judgeflow-judge', 2, {
     upgrade(d, oldVersion) {
       if (oldVersion < 1) {
         d.createObjectStore('sessions', { keyPath: 'k' })
@@ -66,11 +77,50 @@ function db() {
       }
       if (oldVersion < 2) d.createObjectStore('comparisons', { keyPath: ['k', 'id'] }).createIndex('byToken', 'k')
     },
-  }).catch((e) => {
-    dbPromise = null
-    throw e
+    blocked() {
+      blockedListener?.(true)
+    },
+    // A newer tab wants to upgrade: release the database so it is not blocked by us.
+    blocking() {
+      const closing = dbPromise
+      dbPromise = null
+      void closing?.then((d) => d.close(), () => undefined)
+    },
+    terminated() {
+      dbPromise = null
+    },
   })
-  return dbPromise
+}
+
+function db(): Promise<IDBPDatabase<DeskDB>> {
+  if (openTimedOut) return Promise.reject(new Error('IndexedDB open is blocked'))
+  const opening = (dbPromise ??= openDesk()
+    .then((d) => {
+      openTimedOut = false
+      blockedListener?.(false)
+      return d
+    })
+    .catch((e) => {
+      dbPromise = null
+      openTimedOut = false
+      throw e
+    }))
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      openTimedOut = true
+      reject(new Error('IndexedDB open timed out'))
+    }, OPEN_TIMEOUT_MS)
+    opening.then(
+      (d) => {
+        window.clearTimeout(timer)
+        resolve(d)
+      },
+      (e) => {
+        window.clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
 }
 
 export async function loadDesk(k: string): Promise<{ session: JudgeSession | null; rows: LocalRow[]; comparisons: LocalComparison[] }> {
@@ -116,26 +166,28 @@ export async function writeRows(k: string, upserts: LocalRow[], deletes: RowRef[
 }
 
 /** Same multi-tab guard as writeRows: a newer unsynced decision stored by another tab is kept. */
-export async function writeComparisons(k: string, upserts: LocalComparison[], deletes: string[]) {
+export async function writeComparisons(k: string, upserts: LocalComparison[], deletes: ComparisonRef[]) {
   const d = await db()
   const tx = d.transaction('comparisons', 'readwrite')
   const ops = [
     ...upserts.map(async (c) => {
-      const stored = await tx.store.get([k, c.id])
-      if (!(stored?.dirty && (stored.edited_at ?? 0) > (c.edited_at ?? 0))) await tx.store.put({ ...c, k })
+      if (canOverwriteComparison(await tx.store.get([k, c.id]), c)) await tx.store.put({ ...c, k })
     }),
-    ...deletes.map((id) => tx.store.delete([k, id])),
+    ...deletes.map(async (ref) => {
+      const key: [string, string] = [k, ref.id]
+      if (canOverwriteComparison(await tx.store.get(key), ref)) await tx.store.delete(key)
+    }),
   ]
   await Promise.all([...ops, tx.done])
 }
 
-/** Unsynced rows stored under other tokens of the same judge+event (identity comes from the cached session). */
-export async function adoptOrphans(k: string, session: JudgeSession): Promise<LocalRow[]> {
+/** Unsynced scores and pairwise decisions stored under other tokens of the same judge+event (identity comes from the cached session). */
+export async function adoptOrphans(k: string, session: JudgeSession): Promise<{ rows: LocalRow[]; comparisons: LocalComparison[] }> {
   const d = await db()
-  const tx = d.transaction(['sessions', 'rows'], 'readwrite')
+  const tx = d.transaction(['sessions', 'rows', 'comparisons'], 'readwrite')
   const cached = (await tx.objectStore('sessions').getAll()).map((c) => ({ k: c.k, judge_id: c.session.judge.id, event_id: c.session.event.id }))
   const orphans = pickOrphanKeys({ k, judge_id: session.judge.id, event_id: session.event.id }, cached)
-  const adopted: LocalRow[] = []
+  const adopted: { rows: LocalRow[]; comparisons: LocalComparison[] } = { rows: [], comparisons: [] }
   for (const old of orphans) {
     for (const row of await tx.objectStore('rows').index('byToken').getAll(old)) {
       if (!row.dirty) continue
@@ -143,7 +195,15 @@ export async function adoptOrphans(k: string, session: JudgeSession): Promise<Lo
       const existing = await tx.objectStore('rows').get([k, local.team_id, local.criterion_id])
       if (adoptedWins(existing, local)) {
         await tx.objectStore('rows').put({ ...local, k })
-        adopted.push(local)
+        adopted.rows.push(local)
+      }
+    }
+    for (const row of await tx.objectStore('comparisons').index('byToken').getAll(old)) {
+      if (!row.dirty) continue
+      const local: LocalComparison = { id: row.id, team_a: row.team_a, team_b: row.team_b, winner: row.winner, edited_at: row.edited_at, ord: row.ord, dirty: row.dirty, error: row.error }
+      if (adoptedComparisonWins(await tx.objectStore('comparisons').get([k, local.id]), local)) {
+        await tx.objectStore('comparisons').put({ ...local, k })
+        adopted.comparisons.push(local)
       }
     }
     let cursor = await tx.objectStore('rows').index('byToken').openKeyCursor(old)
@@ -151,6 +211,7 @@ export async function adoptOrphans(k: string, session: JudgeSession): Promise<Lo
       await tx.objectStore('rows').delete(cursor.primaryKey)
       cursor = await cursor.continue()
     }
+    await tx.objectStore('comparisons').delete(IDBKeyRange.bound([old], [old, '\uffff']))
     await tx.objectStore('sessions').delete(old)
   }
   await tx.done

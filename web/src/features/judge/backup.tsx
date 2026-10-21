@@ -6,6 +6,7 @@ import { judgeText } from '@/i18n/judge'
 import type { DeskController } from './controller'
 
 const ERROR_ALERT_MS = 60_000
+const REVOKE_DELAY_MS = 30_000
 
 /** True once `active` has been continuously true for `delayMs`. */
 export function useActiveFor(active: boolean, delayMs: number): boolean {
@@ -31,7 +32,8 @@ export function downloadBackup(controller: DeskController): boolean {
   document.body.append(a)
   a.click()
   a.remove()
-  URL.revokeObjectURL(url)
+  // WebKit starts the download asynchronously: revoking at once can cancel it.
+  window.setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS)
   return true
 }
 

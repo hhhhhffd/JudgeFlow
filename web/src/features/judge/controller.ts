@@ -12,6 +12,7 @@ import {
   adoptedWins,
   applyResults,
   buildSheet,
+  dismissOutsideSheet,
   diffRows,
   itemKeys,
   itemNote,
@@ -25,7 +26,9 @@ import {
 } from './scoring'
 import {
   addReserved,
+  adoptedComparisonWins,
   applyComparisonResults,
+  backupComparisons,
   decide,
   diffComparisons,
   mergeComparisons,
@@ -36,7 +39,7 @@ import {
   RESERVE_TARGET,
   type Comparisons,
 } from './pairwise'
-import { adoptOrphans, forgetDesk, loadDesk, saveSession, tokenKey, writeComparisons, writeRows } from './storage'
+import { adoptOrphans, forgetDesk, loadDesk, onStorageBlocked, saveSession, tokenKey, writeComparisons, writeRows } from './storage'
 
 export const SYNC_DEBOUNCE_MS = 1500
 const REFRESH_DEBOUNCE_MS = 500
@@ -62,6 +65,8 @@ export interface DeskState {
   /** Batch-level failure (network/5xx); per-item rejections live on the rows. */
   syncError: string | null
   storageError: string | null
+  /** The device database is held by another tab of this page and cannot be upgraded yet. */
+  storageBlocked: boolean
 }
 
 export type SubmitOutcome =
@@ -85,6 +90,7 @@ export class DeskController {
     syncing: false,
     syncError: null,
     storageError: null,
+    storageBlocked: false,
   }
   private listeners = new Set<() => void>()
   private queue: Promise<void> = Promise.resolve()
@@ -116,6 +122,7 @@ export class DeskController {
 
   start() {
     this.running = true
+    onStorageBlocked((storageBlocked) => this.set({ storageBlocked }))
     window.addEventListener('online', this.onOnline)
     window.addEventListener('offline', this.onOffline)
     document.addEventListener('visibilitychange', this.onVisibility)
@@ -131,6 +138,7 @@ export class DeskController {
 
   stop() {
     this.running = false
+    onStorageBlocked(null)
     window.removeEventListener('online', this.onOnline)
     window.removeEventListener('offline', this.onOffline)
     document.removeEventListener('visibilitychange', this.onVisibility)
@@ -260,7 +268,8 @@ export class DeskController {
         const rows = pruneOutsideSheet(mergeServer(prev, session.scores ?? []), session.teams, session.criteria ?? [])
         const prevComparisons = this.state.comparisons
         const comparisons = session.comparisons ? mergeComparisons(prevComparisons, session.comparisons) : prevComparisons
-        this.set({ session, rows, comparisons, phase: 'ready', fromCache: false, failure: null })
+        // Whatever stopped the last reserve (status, teams, assignments) may have changed: look again.
+        this.set({ session, rows, comparisons, phase: 'ready', fromCache: false, failure: null, reserveExhausted: false })
         this.persist(prev, rows, session)
         this.persistComparisons(prevComparisons, comparisons)
         void this.ensureReserve()
@@ -277,14 +286,22 @@ export class DeskController {
     try {
       await this.writes
       const adopted = await adoptOrphans(this.k, session)
-      if (adopted.length === 0) return
+      if (adopted.rows.length === 0 && adopted.comparisons.length === 0) return
       const rows = { ...this.state.rows }
-      for (const r of adopted) {
+      for (const r of adopted.rows) {
         const key = `${r.team_id}:${r.criterion_id}`
         if (adoptedWins(rows[key], r)) rows[key] = r
       }
-      this.set({ rows })
-      toast.info(judgeText.sync.adoptedToast(adopted.length))
+      const prevComparisons = this.state.comparisons
+      const comparisons = { ...prevComparisons }
+      let ord = Math.max(-1, ...Object.values(comparisons).map((c) => c.ord))
+      for (const c of adopted.comparisons) {
+        if (adoptedComparisonWins(comparisons[c.id], c)) comparisons[c.id] = { ...c, ord: comparisons[c.id]?.ord ?? ++ord }
+      }
+      this.set({ rows, comparisons })
+      this.persistComparisons(prevComparisons, comparisons)
+      if (adopted.rows.length > 0) toast.info(judgeText.sync.adoptedToast(adopted.rows.length))
+      if (adopted.comparisons.length > 0) toast.info(judgeText.sync.adoptedPairsToast(adopted.comparisons.length))
       void this.flush()
     } catch (e) {
       console.error('judge: cannot adopt edits of a previous link', e)
@@ -375,6 +392,17 @@ export class DeskController {
         this.set({ reserving: false })
       }
     })
+  }
+
+  /** The judge's explicit «убрать»: forgets rejected scores of cells that left their sheet. */
+  dismissOutsideSheet() {
+    const s = this.state.session
+    if (!s) return
+    const prev = this.state.rows
+    const rows = dismissOutsideSheet(prev, s.teams, s.criteria ?? [])
+    if (rows === prev) return
+    this.set({ rows })
+    this.persist(prev, rows)
   }
 
   /** Makes rejected rows eligible for sending again. */
@@ -477,7 +505,9 @@ export class DeskController {
   /** The whole local sheet including the judge's token, or null before a session exists. */
   exportSheet(): SheetFile | null {
     const session = this.state.session
-    return session ? buildSheet(session, this.token, this.state.rows, Date.now()) : null
+    if (!session) return null
+    const comparisons = session.event.scoring_mode === 'pairwise' ? backupComparisons(this.state.comparisons) : undefined
+    return buildSheet(session, this.token, this.state.rows, Date.now(), comparisons)
   }
 
   // ---- sheet submission ----

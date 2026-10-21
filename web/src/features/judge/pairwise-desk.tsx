@@ -11,6 +11,7 @@ import { judgeText } from '@/i18n/judge'
 import { ru } from '@/i18n/ru'
 import { cn } from '@/lib/utils'
 import { AlertModal } from './alert-modal'
+import { BackupAlert, BackupMenu } from './backup'
 import type { DeskController } from './controller'
 import { HotkeysHelp, isTyping } from './hotkeys'
 import {
@@ -111,6 +112,7 @@ export function PairwiseDesk({ controller, session }: { controller: DeskControll
             <p className="truncate text-xs text-muted-foreground">{session.judge.name}</p>
           </div>
           <SyncBadge kind={indicator.kind} text={indicator.text} pending={pending} fromCache={state.fromCache} onRetry={() => controller.retryRejected()} />
+          <BackupMenu controller={controller} />
           <HotkeysHelp rows={judgeText.hotkeys.pairwiseRows} />
           {session.judge.submitted_at !== null ? (
             <Badge variant="success" className="py-1">
@@ -126,6 +128,7 @@ export function PairwiseDesk({ controller, session }: { controller: DeskControll
           )}
         </header>
 
+        <BackupAlert controller={controller} errorKind={indicator.kind === 'error'} />
         {state.storageError && (
           <p role="alert" className="border-b border-warning/30 bg-warning-soft px-4 py-2 text-sm text-warning">
             {state.storageError}
@@ -206,9 +209,9 @@ export function PairwiseDesk({ controller, session }: { controller: DeskControll
           {pair && open === 0 && !readOnly && (
             <EmptyPairs online={state.online} reserving={state.reserving} exhausted={state.reserveExhausted} readOnly={false} onMore={() => void controller.reserveMore()} compact />
           )}
-          {pair && open > 0 && !readOnly && state.online && !state.reserveExhausted && (
+          {pair && open > 0 && !readOnly && state.online && (
             <Button variant="ghost" className="self-center" disabled={state.reserving} onClick={() => void controller.reserveMore()}>
-              {state.reserving ? t.moreLoading : t.moreButton}
+              {state.reserving ? t.moreLoading : state.reserveExhausted ? t.recheck : t.moreButton}
             </Button>
           )}
         </main>
@@ -294,9 +297,9 @@ function EmptyPairs({
       {!online && <WifiOff className="size-6 text-muted-foreground" aria-hidden />}
       <p className="text-lg font-semibold">{body ? body.title : t.loadingPairs}</p>
       {body && <p className="max-w-md text-muted-foreground">{body.text}</p>}
-      {online && !exhausted && (
+      {online && (
         <Button variant="outline" disabled={reserving} onClick={onMore}>
-          {reserving ? t.moreLoading : t.moreButton}
+          {reserving ? t.moreLoading : exhausted ? t.recheck : t.moreButton}
         </Button>
       )}
     </div>

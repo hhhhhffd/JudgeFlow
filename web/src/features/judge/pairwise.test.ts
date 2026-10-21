@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   addReserved,
+  adoptedComparisonWins,
+  backupComparisons,
+  canOverwriteComparison,
+  diffComparisons,
   applyComparisonResults,
   currentPair,
   decide,
@@ -84,5 +88,37 @@ describe('pairwise navigation', () => {
 
   it('maps hotkeys', () => {
     expect([winnerForKey('ArrowLeft'), winnerForKey('1'), winnerForKey('ArrowDown'), winnerForKey('0'), winnerForKey('ArrowRight'), winnerForKey('2'), winnerForKey('x')]).toEqual(['a', 'a', 'tie', 'tie', 'b', 'b', null])
+  })
+})
+
+describe('pairwise persistence and backup', () => {
+  it('diffComparisons reports deletes with the version being removed', () => {
+    const prev = decide(base(), 'c1', 'a', 100)
+    const next = Object.fromEntries(Object.entries(prev).filter(([id]) => id !== 'c1'))
+    expect(diffComparisons(prev, next).deletes).toEqual([{ id: 'c1', edited_at: 100 }])
+  })
+
+  it('does not overwrite or delete a newer unsynced decision stored by another tab', () => {
+    const stored = { ...base().c1!, winner: 'b' as const, edited_at: 200, dirty: true }
+    expect(canOverwriteComparison(stored, { edited_at: 100 })).toBe(false)
+    expect(canOverwriteComparison(stored, { edited_at: 200 })).toBe(true)
+    expect(canOverwriteComparison({ ...stored, dirty: false }, { edited_at: 100 })).toBe(true)
+    expect(canOverwriteComparison(undefined, { edited_at: null })).toBe(true)
+  })
+
+  it('an adopted decision wins only against an older or missing one', () => {
+    const adopted = { ...base().c1!, winner: 'a' as const, edited_at: 50, dirty: true }
+    expect(adoptedComparisonWins(undefined, adopted)).toBe(true)
+    expect(adoptedComparisonWins({ ...adopted, edited_at: 40 }, adopted)).toBe(true)
+    expect(adoptedComparisonWins({ ...adopted, edited_at: 50 }, adopted)).toBe(false)
+  })
+
+  it('backs up every decided pair including unsynced and parked ones, skipping untouched pairs', () => {
+    let c = decide(decide(base(), 'c1', 'a', 10), 'c2', 'tie', 20)
+    c = { ...c, c2: { ...c.c2!, error: 'x' } }
+    expect(backupComparisons(c)).toEqual([
+      { id: 'c1', winner: 'a', edited_at: 10 },
+      { id: 'c2', winner: 'tie', edited_at: 20 },
+    ])
   })
 })

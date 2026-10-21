@@ -62,11 +62,12 @@ export function FailedScreen({ message, onRetry }: { message: string | null; onR
   )
 }
 
-export function LoadingScreen() {
+export function LoadingScreen({ blocked = false }: { blocked?: boolean }) {
   return (
     <main role="status" aria-label={judgeText.loading} className="flex min-h-dvh flex-col gap-4 p-6">
       <Skeleton className="h-10 w-64" />
       <Skeleton className="h-64 w-full" />
+      {blocked && <p role="alert" className="text-sm font-medium text-warning">{judgeText.storageBlocked}</p>}
     </main>
   )
 }

@@ -59,7 +59,7 @@ function DeskRoot({ token, onForget }: { token: string; onForget: () => void }) 
 
   if (state.phase === 'revoked') return <RevokedScreen unsynced={pendingCount(state.rows) + pendingComparisons(state.comparisons)} onRecheck={() => controller.recheck()} onForget={forget} />
   if (state.phase === 'failed') return <FailedScreen message={state.failure} onRetry={() => controller.recheck()} />
-  if (!state.session) return <LoadingScreen />
+  if (!state.session) return <LoadingScreen blocked={state.storageBlocked} />
   if (state.session.event.scoring_mode === 'pairwise') return <PairwiseDesk controller={controller} session={state.session} />
   return <Desk controller={controller} session={state.session} />
 }

@@ -1,5 +1,6 @@
 // Pure scoring/outbox logic of the Judge Desk. No IO, no React — unit tested.
 import type {
+  ComparisonItem,
   Criterion,
   EventStatus,
   JudgeScoreRecord,
@@ -104,17 +105,35 @@ export function mergeServer(rows: Rows, server: JudgeScoreRecord[]): Rows {
   return next
 }
 
-/**
- * Drops rows of cells outside the judge's current sheet (team reassigned, track changed).
- * The server rejects them with `not_assigned`, and the judge cannot see them to clear them.
- * An unsent edit survives until the server has actually rejected it.
- */
-export function pruneOutsideSheet(rows: Rows, teams: Team[], criteria: Criterion[]): Rows {
+const allowedCells = (teams: Team[], criteria: Criterion[]) => {
   const allowed = new Set<string>()
   for (const t of teams) for (const c of criteria) if (criterionApplies(c, t)) allowed.add(cellKey(t.id, c.id))
+  return allowed
+}
+
+/**
+ * Drops clean rows of cells outside the judge's current sheet (team reassigned, track changed).
+ * Unsent and rejected rows stay: they are part of the backup export and are reported to the
+ * judge until explicitly dismissed (see dismissOutsideSheet).
+ */
+export function pruneOutsideSheet(rows: Rows, teams: Team[], criteria: Criterion[]): Rows {
+  const allowed = allowedCells(teams, criteria)
   const next: Rows = {}
-  for (const [k, row] of Object.entries(rows)) if (allowed.has(k) || (row.dirty && !row.error)) next[k] = row
+  for (const [k, row] of Object.entries(rows)) if (allowed.has(k) || row.dirty) next[k] = row
   return Object.keys(next).length === Object.keys(rows).length ? rows : next
+}
+
+/** Rejected rows of cells that are not on the judge's sheet any more. */
+export function rejectedOutsideSheet(rows: Rows, teams: Team[], criteria: Criterion[]): LocalRow[] {
+  const allowed = allowedCells(teams, criteria)
+  return Object.entries(rows).filter(([k, row]) => row.error && !allowed.has(k)).map(([, row]) => row)
+}
+
+/** The judge's explicit "forget these": removes the rejected rows outside the sheet. */
+export function dismissOutsideSheet(rows: Rows, teams: Team[], criteria: Criterion[]): Rows {
+  const gone = new Set(rejectedOutsideSheet(rows, teams, criteria).map(keyOf))
+  if (gone.size === 0) return rows
+  return Object.fromEntries(Object.entries(rows).filter(([k]) => !gone.has(k)))
 }
 
 export const BATCH_LIMIT = 100
@@ -140,7 +159,7 @@ const toItems = (rows: LocalRow[]): ScoreItem[] =>
  * Emergency backup of the whole local sheet (SPEC §12): every row, synced or not, parked or not.
  * The organizer imports it with the usual last-writer-wins rules, so extra rows are harmless.
  */
-export function buildSheet(session: JudgeSession, token: string, rows: Rows, now: number): SheetFile {
+export function buildSheet(session: JudgeSession, token: string, rows: Rows, now: number, comparisons?: ComparisonItem[]): SheetFile {
   return {
     format: SHEET_FORMAT,
     event_id: session.event.id,
@@ -149,6 +168,7 @@ export function buildSheet(session: JudgeSession, token: string, rows: Rows, now
     token,
     exported_at: now,
     items: toItems(Object.values(rows)),
+    ...(comparisons ? { comparisons } : {}),
   }
 }
 

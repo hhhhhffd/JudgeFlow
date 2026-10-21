@@ -121,11 +121,32 @@ export function applyComparisonResults(c: Comparisons, sent: ComparisonItem[], r
   return out
 }
 
+/** A decision removed from memory; edited_at is the version being removed (see canOverwriteComparison). */
+export interface ComparisonRef {
+  id: string
+  edited_at: number | null
+}
+
 /** Writes only what changed since the previous snapshot. */
-export function diffComparisons(prev: Comparisons, next: Comparisons): { upserts: LocalComparison[]; deletes: string[] } {
+export function diffComparisons(prev: Comparisons, next: Comparisons): { upserts: LocalComparison[]; deletes: ComparisonRef[] } {
   const upserts = Object.entries(next).filter(([id, row]) => prev[id] !== row).map(([, row]) => row)
-  const deletes = Object.keys(prev).filter((id) => !(id in next))
+  const deletes = Object.entries(prev).filter(([id]) => !(id in next)).map(([id, row]) => ({ id, edited_at: row.edited_at }))
   return { upserts, deletes }
+}
+
+/** Multi-tab guard (same as canOverwriteStored): a newer unsynced decision stored by another tab is kept. */
+export const canOverwriteComparison = (stored: LocalComparison | undefined, incoming: { edited_at: number | null }) =>
+  !(stored?.dirty && (stored.edited_at ?? 0) > (incoming.edited_at ?? 0))
+
+/** An unsynced decision carried over from an old token wins only against an older (or missing) one. */
+export const adoptedComparisonWins = (existing: LocalComparison | undefined, adopted: LocalComparison) =>
+  !existing || (adopted.edited_at ?? 0) > (existing.edited_at ?? 0)
+
+/** Emergency backup entries (SPEC §13): every local decision, synced or not, parked or not. */
+export function backupComparisons(c: Comparisons): { id: string; winner: Winner | null; edited_at: number }[] {
+  return sortedComparisons(c)
+    .filter((x) => x.edited_at !== null)
+    .map((x) => ({ id: x.id, winner: x.winner, edited_at: x.edited_at as number }))
 }
 
 /**

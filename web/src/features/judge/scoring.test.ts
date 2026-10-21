@@ -16,6 +16,8 @@ import {
   itemProgress,
   overallProgress,
   pruneOutsideSheet,
+  dismissOutsideSheet,
+  rejectedOutsideSheet,
   mergeServer,
   missingCells,
   pendingCount,
@@ -292,7 +294,7 @@ describe('tracks', () => {
     expect(missingCells(ts, cs, {})).toHaveLength(3)
   })
 
-  it('prunes rows outside the sheet but keeps unsent edits', () => {
+  it('prunes clean rows outside the sheet, keeps unsent and rejected ones until dismissed', () => {
     const row = (team_id: string, criterion_id: string, patch: Partial<LocalRow> = {}): LocalRow => ({ team_id, criterion_id, value_x100: 100, note: '', edited_at: 1, dirty: false, ...patch })
     const rows: Rows = {
       't1:c2': row('t1', 'c2'),
@@ -300,7 +302,9 @@ describe('tracks', () => {
       't9:c1': row('t9', 'c1', { dirty: true }),
       'x:c1': row('x', 'c1', { dirty: true, error: 'rejected' }),
     }
-    expect(Object.keys(pruneOutsideSheet(rows, ts, cs)).sort()).toEqual(['t1:c2', 't9:c1'])
+    expect(Object.keys(pruneOutsideSheet(rows, ts, cs)).sort()).toEqual(['t1:c2', 't9:c1', 'x:c1'])
+    expect(rejectedOutsideSheet(rows, ts, cs).map((r) => r.team_id)).toEqual(['x'])
+    expect(Object.keys(dismissOutsideSheet(rows, ts, cs)).sort()).toEqual(['t1:c2', 't2:c2', 't9:c1'])
   })
 
   it('exports every local row including parked ones', () => {
@@ -312,5 +316,15 @@ describe('tracks', () => {
     const sheet = buildSheet(session, 'tok', rows, 9)
     expect(sheet).toMatchObject({ format: 'judgeflow-sheet/1', event_id: 'e', judge_id: 'j', token: 'tok', exported_at: 9 })
     expect(sheet.items.map((i) => i.criterion_id)).toEqual(['c2', 'c1'])
+  })
+})
+
+describe('buildSheet pairwise', () => {
+  it('carries the comparisons next to empty items', () => {
+    const session = { event: { id: 'e' }, judge: { id: 'j', name: 'J' } } as JudgeSession
+    const sheet = buildSheet(session, 'tok', {}, 9, [{ id: 'c1', winner: 'a', edited_at: 3 }])
+    expect(sheet.items).toEqual([])
+    expect(sheet.comparisons).toEqual([{ id: 'c1', winner: 'a', edited_at: 3 }])
+    expect(buildSheet(session, 'tok', {}, 9).comparisons).toBeUndefined()
   })
 })
