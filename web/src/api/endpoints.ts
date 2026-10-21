@@ -64,6 +64,22 @@ export const eventsApi = {
   reorderCriteria: (id: T.Id, ids: T.Id[]) =>
     request<void>(`/api/events/${id}/criteria/order`, { method: 'PUT', body: { ids } satisfies T.OrderRequest }),
 
+  addTrack: (id: T.Id, name: string) => request<T.Track>(`/api/events/${id}/tracks`, { method: 'POST', body: { name } }),
+  updateTrack: (trackId: T.Id, name: string) => request<T.Track>(`/api/tracks/${trackId}`, { method: 'PATCH', body: { name } }),
+  removeTrack: (trackId: T.Id) => request<void>(`/api/tracks/${trackId}`, { method: 'DELETE' }),
+  reorderTracks: (id: T.Id, ids: T.Id[]) =>
+    request<void>(`/api/events/${id}/tracks/order`, { method: 'PUT', body: { ids } satisfies T.OrderRequest }),
+
+  putAssignments: (id: T.Id, pairs: T.JudgeTeamPair[]) =>
+    request<T.EventFull>(`/api/events/${id}/assignments`, { method: 'PUT', body: { pairs } }),
+  autoAssign: (id: T.Id, body: T.AutoAssignRequest) =>
+    request<T.EventFull>(`/api/events/${id}/assignments/auto`, { method: 'POST', body }),
+  putConflicts: (id: T.Id, pairs: T.JudgeTeamPair[]) =>
+    request<T.EventFull>(`/api/events/${id}/conflicts`, { method: 'PUT', body: { pairs } }),
+  /** Applies a `judgeflow-sheet/1` file with the rules of PUT /api/judge/scores. */
+  importSheet: (id: T.Id, sheet: unknown) =>
+    request<T.PutScoresResponse>(`/api/events/${id}/import-sheet`, { method: 'POST', body: sheet }),
+
   addJudges: (id: T.Id, names: string[]) =>
     request<T.JudgeWithLink[]>(`/api/events/${id}/judges`, { method: 'POST', body: { names } satisfies T.CreateJudgesRequest }),
   updateJudge: (judgeId: T.Id, body: T.UpdateJudgeRequest) =>

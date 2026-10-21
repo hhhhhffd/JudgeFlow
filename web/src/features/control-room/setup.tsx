@@ -1,12 +1,13 @@
 import { useState, type ReactNode } from 'react'
-import { ArrowDown, ArrowUp, ClipboardPaste, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ClipboardPaste, LayoutTemplate, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
 import { eventsApi } from '@/api/endpoints'
-import type { Criterion, ScoringMode, Team, UpdateEventRequest } from '@/api/types'
+import type { Criterion, ScoringMode, Team, Track, UpdateEventRequest } from '@/api/types'
 import { EmptyState } from '@/components/state-views'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { cr } from '@/i18n/control-room'
@@ -17,6 +18,8 @@ import { cn } from '@/lib/utils'
 import { ConfirmDialog } from './confirm-dialog'
 import { useEventMutation, useFull, useIsDraft } from './context'
 import { moveItem, parseTeamsPaste } from './lib'
+import { TemplatePicker } from './template-picker'
+import { CRITERIA_TEMPLATES } from './templates'
 
 export function Setup() {
   const draft = useIsDraft()
@@ -33,6 +36,7 @@ export function Setup() {
       )}
       <BasicsCard />
       <RulesCard />
+      <TracksCard />
       <TeamsCard />
       <CriteriaCard />
     </div>
@@ -210,6 +214,123 @@ function LabelRow(p: { id: string; toggle: string; label: string; on: boolean; s
   )
 }
 
+const NO_TRACK = '__none__'
+
+/** Track picker; `null` is the "none"/"all tracks" choice, named by `noneLabel`. */
+function TrackSelect({ id, label, value, noneLabel, onChange, hint }: { id: string; label: string; value: string | null; noneLabel: string; onChange: (v: string | null) => void; hint?: string }) {
+  const { tracks } = useFull()
+  return (
+    <div className="grid gap-1.5">
+      <Label id={`${id}-l`}>{label}</Label>
+      <Select value={value ?? NO_TRACK} onValueChange={(v) => onChange(v === NO_TRACK ? null : v)}>
+        <SelectTrigger id={id} aria-labelledby={`${id}-l`} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NO_TRACK}>{noneLabel}</SelectItem>
+          {tracks.map((t) => (
+            <SelectItem key={t.id} value={t.id}>
+              {t.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+function TracksCard() {
+  const { event, tracks } = useFull()
+  const draft = useIsDraft()
+  const [editing, setEditing] = useState<Track | 'new' | null>(null)
+  const [removing, setRemoving] = useState<Track | null>(null)
+  const reorder = useEventMutation((ids: string[]) => eventsApi.reorderTracks(event.id, ids))
+  const remove = useEventMutation((id: string) => eventsApi.removeTrack(id))
+
+  return (
+    <Card
+      title={cr.setup.tracks}
+      hint={cr.setup.tracksHint}
+      action={
+        <Button size="sm" disabled={!draft} onClick={() => setEditing('new')}>
+          <Plus />
+          {cr.setup.addTrack}
+        </Button>
+      }
+    >
+      {tracks.length === 0 ? (
+        <EmptyState title={cr.setup.tracksEmpty} text={cr.setup.tracksEmptyText} />
+      ) : (
+        <ol className="divide-y rounded-lg border">
+          {tracks.map((t, i) => (
+            <li key={t.id} className="flex items-center gap-3 py-1.5 pr-1.5 pl-3">
+              <span className="num w-6 shrink-0 font-mono text-xs text-muted-foreground">{i + 1}</span>
+              <p className="min-w-0 flex-1 truncate text-sm font-medium">{t.name}</p>
+              <RowButtons
+                index={i}
+                count={tracks.length}
+                disabled={!draft}
+                name={t.name}
+                onMove={(d) => reorder.mutate(moveItem(tracks, i, d).map((x) => x.id))}
+                onEdit={() => setEditing(t)}
+                onRemove={() => setRemoving(t)}
+              />
+            </li>
+          ))}
+        </ol>
+      )}
+      {editing && <TrackDialog track={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      <ConfirmDialog
+        open={removing !== null}
+        onOpenChange={(o) => !o && setRemoving(null)}
+        title={cr.setup.removeTrackTitle(removing?.name ?? '')}
+        description={cr.setup.removeTrackText}
+        confirmLabel={ru.common.delete}
+        destructive
+        pending={remove.isPending}
+        onConfirm={() => removing && remove.mutate(removing.id, { onSuccess: () => setRemoving(null) })}
+      />
+    </Card>
+  )
+}
+
+function TrackDialog({ track, onClose }: { track: Track | null; onClose: () => void }) {
+  const { event } = useFull()
+  const [name, setName] = useState(track?.name ?? '')
+  const save = useEventMutation((n: string) => (track ? eventsApi.updateTrack(track.id, n) : eventsApi.addTrack(event.id, n)))
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <form
+          className="grid gap-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            save.mutate(name.trim(), { onSuccess: onClose })
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{track ? cr.setup.editTrack : cr.setup.addTrack}</DialogTitle>
+            <DialogDescription className="sr-only">{cr.setup.tracks}</DialogDescription>
+          </DialogHeader>
+          <Field label={cr.setup.trackName} htmlFor="tr-name">
+            <Input id="tr-name" required autoFocus maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          {save.isError && <p role="alert" className="text-sm text-destructive">{errorText(save.error)}</p>}
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {ru.common.cancel}
+            </Button>
+            <Button type="submit" disabled={!name.trim() || save.isPending}>
+              {ru.common.save}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function RowButtons({ index, count, disabled, onMove, onEdit, onRemove, name }: { index: number; count: number; disabled: boolean; onMove: (d: number) => void; onEdit: () => void; onRemove: () => void; name: string }) {
   return (
     <div className="flex shrink-0 items-center">
@@ -230,7 +351,7 @@ function RowButtons({ index, count, disabled, onMove, onEdit, onRemove, name }: 
 }
 
 function TeamsCard() {
-  const { event, teams } = useFull()
+  const { event, teams, tracks } = useFull()
   const draft = useIsDraft()
   const [editing, setEditing] = useState<Team | 'new' | null>(null)
   const [pasting, setPasting] = useState(false)
@@ -264,6 +385,7 @@ function TeamsCard() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{t.name}</p>
                 {t.description && <p className="truncate text-xs text-muted-foreground">{t.description}</p>}
+                {t.track_id && <p className="truncate text-xs text-muted-foreground">{cr.setup.trackLabel}: {tracks.find((x) => x.id === t.track_id)?.name ?? '—'}</p>}
               </div>
               <RowButtons
                 index={i}
@@ -298,7 +420,9 @@ function TeamDialog({ team, onClose }: { team: Team | null; onClose: () => void 
   const { event } = useFull()
   const [name, setName] = useState(team?.name ?? '')
   const [description, setDescription] = useState(team?.description ?? '')
-  const save = useEventMutation((body: { name: string; description: string | null }) =>
+  const [trackId, setTrackId] = useState<string | null>(team?.track_id ?? null)
+  const { tracks } = useFull()
+  const save = useEventMutation((body: { name: string; description: string | null; track_id: string | null }) =>
     team ? eventsApi.updateTeam(team.id, body) : eventsApi.addTeam(event.id, body),
   )
   return (
@@ -308,7 +432,7 @@ function TeamDialog({ team, onClose }: { team: Team | null; onClose: () => void 
           className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault()
-            save.mutate({ name: name.trim(), description: description.trim() || null }, { onSuccess: onClose })
+            save.mutate({ name: name.trim(), description: description.trim() || null, track_id: trackId }, { onSuccess: onClose })
           }}
         >
           <DialogHeader>
@@ -321,6 +445,7 @@ function TeamDialog({ team, onClose }: { team: Team | null; onClose: () => void 
           <Field label={cr.setup.teamDescription} htmlFor="t-desc">
             <Textarea id="t-desc" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
           </Field>
+          {tracks.length > 0 && <TrackSelect id="t-track" label={cr.setup.trackLabel} value={trackId} noneLabel={cr.setup.trackNone} onChange={setTrackId} />}
           {save.isError && <p role="alert" className="text-sm text-destructive">{errorText(save.error)}</p>}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
@@ -337,11 +462,12 @@ function TeamDialog({ team, onClose }: { team: Team | null; onClose: () => void 
 }
 
 function PasteDialog({ onClose }: { onClose: () => void }) {
-  const { event } = useFull()
+  const { event, tracks } = useFull()
   const [text, setText] = useState('')
   const [clipboardError, setClipboardError] = useState(false)
-  const rows = parseTeamsPaste(text)
-  const bulk = useEventMutation((teams: typeof rows) => eventsApi.addTeamsBulk(event.id, teams))
+  const rows = parseTeamsPaste(text, tracks)
+  const unknownTracks = [...new Set(rows.flatMap((r) => (r.unknown_track ? [r.unknown_track] : [])))]
+  const bulk = useEventMutation((teams: typeof rows) => eventsApi.addTeamsBulk(event.id, teams.map((r) => ({ name: r.name, description: r.description, track_id: r.track_id }))))
 
   async function fromClipboard() {
     try {
@@ -365,7 +491,9 @@ function PasteDialog({ onClose }: { onClose: () => void }) {
         >
           <DialogHeader>
             <DialogTitle>{cr.setup.pasteTitle}</DialogTitle>
-            <DialogDescription>{cr.setup.pasteText}</DialogDescription>
+            <DialogDescription>
+              {cr.setup.pasteText} {tracks.length > 0 && cr.setup.pasteTrackHint}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
             <div className="flex items-center justify-between gap-2">
@@ -387,11 +515,13 @@ function PasteDialog({ onClose }: { onClose: () => void }) {
                     <span className="num w-5 shrink-0 font-mono text-xs text-muted-foreground">{i + 1}</span>
                     <span className="min-w-0 flex-1 truncate font-medium">{r.name}</span>
                     {r.description && <span className="min-w-0 flex-1 truncate text-muted-foreground">{r.description}</span>}
+                    {r.track_id && <span className="shrink-0 text-muted-foreground">{tracks.find((t) => t.id === r.track_id)?.name}</span>}
                   </li>
                 ))}
               </ol>
             )}
           </div>
+          {unknownTracks.length > 0 && <p role="status" className="text-sm text-warning">{cr.setup.pasteUnknownTrack(unknownTracks.join(', '))}</p>}
           {bulk.isError && <p role="alert" className="text-sm text-destructive">{errorText(bulk.error)}</p>}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
@@ -408,8 +538,9 @@ function PasteDialog({ onClose }: { onClose: () => void }) {
 }
 
 function CriteriaCard() {
-  const { event, criteria } = useFull()
+  const { event, criteria, tracks } = useFull()
   const draft = useIsDraft()
+  const [templating, setTemplating] = useState(false)
   const [editing, setEditing] = useState<Criterion | 'new' | null>(null)
   const [removing, setRemoving] = useState<Criterion | null>(null)
   const reorder = useEventMutation((ids: string[]) => eventsApi.reorderCriteria(event.id, ids))
@@ -419,10 +550,16 @@ function CriteriaCard() {
     <Card
       title={cr.setup.criteria}
       action={
-        <Button size="sm" disabled={!draft} onClick={() => setEditing('new')}>
-          <Plus />
-          {cr.setup.addCriterion}
-        </Button>
+        <>
+          <Button variant="outline" size="sm" disabled={!draft} onClick={() => setTemplating(true)}>
+            <LayoutTemplate />
+            {cr.setup.templates}
+          </Button>
+          <Button size="sm" disabled={!draft} onClick={() => setEditing('new')}>
+            <Plus />
+            {cr.setup.addCriterion}
+          </Button>
+        </>
       }
     >
       {criteria.length === 0 ? (
@@ -434,7 +571,9 @@ function CriteriaCard() {
               <span className="num w-6 shrink-0 font-mono text-xs text-muted-foreground">{i + 1}</span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{c.name}</p>
-                <p className="num truncate text-xs text-muted-foreground">{cr.setup.criterionSummary(formatX100(c.max_x100), formatX100(c.step_x100), c.weight)}</p>
+                <p className="num truncate text-xs text-muted-foreground">{cr.setup.criterionSummary(formatX100(c.max_x100), formatX100(c.step_x100), c.weight)}
+                  {tracks.length > 0 && ` · ${c.track_id ? (tracks.find((t) => t.id === c.track_id)?.name ?? '—') : cr.setup.criterionAllTracks}`}
+                </p>
               </div>
               <RowButtons
                 index={i}
@@ -450,6 +589,7 @@ function CriteriaCard() {
         </ol>
       )}
       {editing && <CriterionDialog criterion={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      {templating && <TemplateDialog onClose={() => setTemplating(false)} />}
       <ConfirmDialog
         open={removing !== null}
         onOpenChange={(o) => !o && setRemoving(null)}
@@ -471,6 +611,8 @@ function CriterionDialog({ criterion, onClose }: { criterion: Criterion | null; 
   const [max, setMax] = useState(criterion ? formatX100(criterion.max_x100) : '10')
   const [step, setStep] = useState(criterion ? formatX100(criterion.step_x100) : '1')
   const [weight, setWeight] = useState(String(criterion?.weight ?? 1))
+  const [trackId, setTrackId] = useState<string | null>(criterion?.track_id ?? null)
+  const { tracks } = useFull()
 
   const maxX100 = parseX100(max)
   const stepX100 = parseX100(step)
@@ -482,7 +624,7 @@ function CriterionDialog({ criterion, onClose }: { criterion: Criterion | null; 
     maxX100 % stepX100 === 0 &&
     Number.isInteger(weightNum) && weightNum >= 1 && weightNum <= 1000
 
-  const save = useEventMutation((body: { name: string; description: string | null; max_x100: number; step_x100: number; weight: number }) =>
+  const save = useEventMutation((body: { name: string; description: string | null; max_x100: number; step_x100: number; weight: number; track_id: string | null }) =>
     criterion ? eventsApi.updateCriterion(criterion.id, body) : eventsApi.addCriterion(event.id, body),
   )
 
@@ -495,7 +637,7 @@ function CriterionDialog({ criterion, onClose }: { criterion: Criterion | null; 
             e.preventDefault()
             if (!valid) return
             save.mutate(
-              { name: name.trim(), description: description.trim() || null, max_x100: maxX100, step_x100: stepX100, weight: weightNum },
+              { name: name.trim(), description: description.trim() || null, max_x100: maxX100, step_x100: stepX100, weight: weightNum, track_id: trackId },
               { onSuccess: onClose },
             )
           }}
@@ -521,6 +663,7 @@ function CriterionDialog({ criterion, onClose }: { criterion: Criterion | null; 
               <Input id="c-weight" inputMode="numeric" className="num font-mono" value={weight} onChange={(e) => setWeight(e.target.value)} />
             </Field>
           </div>
+          {tracks.length > 0 && <TrackSelect id="c-track" label={cr.setup.criterionTrackLabel} value={trackId} noneLabel={cr.setup.criterionAllTracks} onChange={setTrackId} hint={cr.setup.criterionTrackHint} />}
           <p className={cn('text-xs', valid ? 'text-muted-foreground' : 'text-destructive')}>{valid ? cr.setup.criterionWeightHint : cr.setup.criterionInvalid}</p>
           {save.isError && <p role="alert" className="text-sm text-destructive">{errorText(save.error)}</p>}
           <DialogFooter>
@@ -529,6 +672,41 @@ function CriterionDialog({ criterion, onClose }: { criterion: Criterion | null; 
             </Button>
             <Button type="submit" disabled={!valid || save.isPending}>
               {ru.common.save}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function TemplateDialog({ onClose }: { onClose: () => void }) {
+  const { event } = useFull()
+  const [picked, setPicked] = useState(CRITERIA_TEMPLATES[0]!.id)
+  const template = CRITERIA_TEMPLATES.find((t) => t.id === picked)!
+  const add = useEventMutation((criteria: typeof template.criteria) => eventsApi.addCriteriaBulk(event.id, criteria), cr.setup.saved)
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-xl">
+        <form
+          className="grid gap-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            add.mutate(template.criteria, { onSuccess: onClose })
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{cr.setup.templateTitle}</DialogTitle>
+            <DialogDescription>{cr.setup.templateText}</DialogDescription>
+          </DialogHeader>
+          <TemplatePicker value={picked} onChange={setPicked} label={cr.setup.templates} />
+          {add.isError && <p role="alert" className="text-sm text-destructive">{errorText(add.error)}</p>}
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {ru.common.cancel}
+            </Button>
+            <Button type="submit" disabled={add.isPending}>
+              {cr.setup.templateApply(template.criteria.length)}
             </Button>
           </DialogFooter>
         </form>

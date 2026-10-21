@@ -3,6 +3,7 @@ import type { PublicRankingRow } from '@/api/types'
 import { boardScale, groupByRank, podiumSlots } from './lib'
 
 const row = (team_id: string, rank: number | null): PublicRankingRow => ({
+  track_id: null,
   rank,
   tie: false,
   team_id,

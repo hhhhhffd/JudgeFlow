@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, MapPin, Plus } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 import { eventsApi } from '@/api/endpoints'
 import type { EventListItem } from '@/api/types'
 import { PageContainer } from '@/components/admin-layout'
@@ -11,8 +12,11 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import { CRITERIA_TEMPLATES } from '@/features/control-room/templates'
+import { cr } from '@/i18n/control-room'
 import { ru } from '@/i18n/ru'
 import { errorText } from '@/lib/errors'
 import { formatDateTime } from '@/lib/format'
@@ -110,9 +114,22 @@ function CreateEventDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   const [description, setDescription] = useState('')
   const [startsAt, setStartsAt] = useState('')
   const [location, setLocation] = useState('')
+  const [templateId, setTemplateId] = useState('none')
+  const template = CRITERIA_TEMPLATES.find((t) => t.id === templateId)
 
   const create = useMutation({
-    mutationFn: eventsApi.create,
+    mutationFn: async (body: Parameters<typeof eventsApi.create>[0]) => {
+      const full = await eventsApi.create(body)
+      if (template) {
+        try {
+          await eventsApi.addCriteriaBulk(full.event.id, template.criteria)
+        } catch (e) {
+          // The event exists already: open it and let the organizer add criteria by hand.
+          toast.error(errorText(e))
+        }
+      }
+      return full
+    },
     onSuccess: ({ event }) => {
       void qc.invalidateQueries({ queryKey: ['events'] })
       onOpenChange(false)
@@ -162,6 +179,23 @@ function CreateEventDialog({ open, onOpenChange }: { open: boolean; onOpenChange
               <Label htmlFor="ev-loc">{ru.events.locationLabel}</Label>
               <Input id="ev-loc" maxLength={200} value={location} onChange={(e) => setLocation(e.target.value)} />
             </div>
+          </div>
+          <div className="grid gap-1.5">
+            <Label id="ev-template-l">{cr.createTemplate.label}</Label>
+            <Select value={templateId} onValueChange={setTemplateId}>
+              <SelectTrigger aria-labelledby="ev-template-l" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{cr.createTemplate.none}</SelectItem>
+                {CRITERIA_TEMPLATES.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">{template ? `${template.description} ${cr.setup.templateCriteria(template.criteria.length)}. ${cr.createTemplate.hint}` : cr.createTemplate.hint}</p>
           </div>
           {create.isError && <p role="alert" className="text-sm text-destructive">{errorText(create.error)}</p>}
           <DialogFooter>

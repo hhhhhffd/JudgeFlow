@@ -100,15 +100,23 @@ export interface EventRecord {
   stage_view: StageView
   stage_top_n: number
   stage_revealed: number
+  /** Track shown on the stage; null = teams without a track / the only group. */
+  stage_track_id: Id | null
   locked_at: number | null
   created_at: number
   updated_at: number
 }
 
+export interface Track {
+  id: Id
+  name: string
+}
 export interface Team {
   id: Id
   name: string
   description: string | null
+  /** Track the team competes in (SPEC §12), null = none. */
+  track_id: Id | null
   sort_order: number
 }
 export interface Criterion {
@@ -118,6 +126,8 @@ export interface Criterion {
   max_x100: number
   step_x100: number
   weight: number
+  /** null = applies to every team. */
+  track_id: Id | null
   sort_order: number
 }
 export interface JudgeSummary {
@@ -129,11 +139,19 @@ export interface JudgeSummary {
   pending_count: number
   scored_count: number
 }
+export interface JudgeTeamPair {
+  judge_id: Id
+  team_id: Id
+}
 export interface EventFull {
   event: EventRecord
   teams: Team[]
   criteria: Criterion[]
   judges: JudgeSummary[]
+  tracks: Track[]
+  /** A judge with no assignment judges every team. */
+  assignments: JudgeTeamPair[]
+  conflicts: JudgeTeamPair[]
 }
 
 export interface CreateEventRequest {
@@ -168,6 +186,7 @@ export type UpdateEventRequest = Partial<
     | 'overlay_opacity'
     | 'stage_view'
     | 'stage_top_n'
+    | 'stage_track_id'
   >
 >
 
@@ -180,6 +199,7 @@ export interface TransitionRequest {
 export interface TeamInput {
   name: string
   description?: string | null
+  track_id?: Id | null
 }
 export interface CriterionInput {
   name: string
@@ -187,6 +207,15 @@ export interface CriterionInput {
   max_x100: number
   step_x100: number
   weight: number
+  track_id?: Id | null
+}
+export interface AutoAssignRequest {
+  judges_per_team: number
+  allow_short?: boolean
+}
+/** 409 details of POST …/assignments/auto when some team cannot get enough judges. */
+export interface AutoAssignShortDetails {
+  short: { team_id: Id; got: number }[]
 }
 export interface OrderRequest {
   ids: Id[]
@@ -212,10 +241,14 @@ export interface MatrixCell {
   team_id: Id
   scored: number
   total: number
+  /** An explicit assignment row exists; with no assignments in the event every team is in the judge's set. */
+  assigned: boolean
+  /** Conflict of interest; wins over assignment (total is 0). */
+  conflict: boolean
 }
 export interface Matrix {
   judges: JudgeSummary[]
-  teams: { id: Id; name: string }[]
+  teams: { id: Id; name: string; track_id: Id | null }[]
   cells: MatrixCell[]
 }
 
@@ -239,6 +272,8 @@ export interface JudgeScore {
   score_x100: number
 }
 export interface RankingRow {
+  /** Ranks restart per track. */
+  track_id: Id | null
   rank: number | null
   tie: boolean
   team_id: Id
@@ -253,6 +288,7 @@ export interface Ranking {
   mode: RankingMode
   quorum: number
   rows: RankingRow[]
+  tracks: Track[]
 }
 /** Public payloads share the admin ranking shape. */
 export type PublicRankingRow = RankingRow
@@ -308,6 +344,7 @@ export interface JudgeSession {
   event: JudgeSessionEvent
   teams: Team[]
   criteria: Criterion[]
+  tracks: Track[]
   scores: JudgeScoreRecord[]
 }
 export interface ScoreItem {
@@ -326,7 +363,7 @@ export interface ScoreResult {
   team_id: Id
   criterion_id: Id
   status: ScoreResultStatus
-  /** e.g. invalid_state, sheet_submitted, validation */
+  /** e.g. invalid_state, sheet_submitted, validation, not_assigned */
   error?: string
   server?: { value_x100: number | null; note: string | null; edited_at: number }
 }
@@ -364,7 +401,7 @@ export interface PublicEvent {
   background_url: string | null
   overlay: Overlay
   /** Present for published events or visibility live_full; used to label per-criterion columns. */
-  criteria?: Pick<Criterion, 'id' | 'name'>[]
+  criteria?: Pick<Criterion, 'id' | 'name' | 'track_id'>[]
 }
 export interface PublicEventResponse {
   event: PublicEvent
@@ -378,6 +415,8 @@ export interface StageState {
   revealed: number
   total_groups: number
   available: boolean
+  /** Track whose rows are shown. */
+  track_id: Id | null
 }
 export interface StageEvent {
   id: Id
@@ -389,13 +428,27 @@ export interface StageEvent {
   teams_label_enabled: boolean
   criteria_label: string | null
   criteria_label_enabled: boolean
-  criteria: Pick<Criterion, 'id' | 'name'>[]
+  criteria: Pick<Criterion, 'id' | 'name' | 'track_id'>[]
 }
 export interface StageResponse {
   event: StageEvent
   stage: StageState
+  tracks: Track[]
   rows: PublicRankingRow[]
 }
 
 // ---- stream ----
 export type ChangeKind = 'scores' | 'status' | 'event' | 'composition' | 'alert' | 'judges' | 'presence' | 'stage'
+
+// ---- emergency sheet export / import (SPEC §12) ----
+export const SHEET_FORMAT = 'judgeflow-sheet/1'
+export interface SheetFile {
+  format: typeof SHEET_FORMAT
+  event_id: Id
+  judge_id: Id
+  judge_name: string
+  /** The judge's raw token: the file is personal. */
+  token: string
+  exported_at: number
+  items: ScoreItem[]
+}

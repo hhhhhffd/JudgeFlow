@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { liveText } from '@/i18n/judge'
 import { formatX100 } from '@/lib/format'
 import { errorText } from '@/lib/errors'
+import { criteriaOfGroup, groupByTrack } from '@/lib/tracks'
 import { cn } from '@/lib/utils'
 import { Backdrop } from './backdrop'
 
@@ -128,9 +129,23 @@ function Placeholder({ hidden }: { hidden: boolean }) {
 }
 
 function Board({ event, results }: { event: PublicEvent; results: PublicRanking }) {
-  const podium = results.rows.filter((r) => r.rank !== null).slice(0, 3)
-  const criteria = event.criteria ?? []
-  const showCriteria = criteria.length > 0 && results.rows.some((r) => r.criteria.length > 0)
+  const groups = groupByTrack(results.rows, results.tracks)
+  const withHeadings = results.tracks.length > 0
+  return (
+    <>
+      {groups.map((g) => (
+        <section key={g.track?.id ?? 'none'} aria-label={withHeadings ? (g.track?.name ?? liveText.table.noTrack) : undefined} className="flex flex-col gap-8">
+          {withHeadings && <h2 className="text-3xl font-semibold tracking-tight lg:text-5xl">{g.track?.name ?? liveText.table.noTrack}</h2>}
+          <GroupBoard event={event} rows={g.rows} quorum={results.quorum} criteria={criteriaOfGroup(event.criteria ?? [], g.track)} />
+        </section>
+      ))}
+    </>
+  )
+}
+
+function GroupBoard({ event, rows, quorum, criteria }: { event: PublicEvent; rows: PublicRankingRow[]; quorum: number; criteria: NonNullable<PublicEvent['criteria']> }) {
+  const podium = rows.filter((r) => r.rank !== null).slice(0, 3)
+  const showCriteria = criteria.length > 0 && rows.some((r) => r.criteria.length > 0)
   const teamsHeading = event.teams_label_enabled && event.teams_label?.trim() ? event.teams_label.trim() : liveText.table.team
 
   return (
@@ -166,14 +181,14 @@ function Board({ event, results }: { event: PublicEvent; results: PublicRanking 
               </tr>
             </thead>
             <tbody>
-              {results.rows.map((row) => (
+              {rows.map((row) => (
                 <tr key={row.team_id} className="border-b last:border-b-0">
                   <td className="num px-4 py-4 text-2xl font-semibold lg:px-6 lg:text-4xl">
                     <RankMark row={row} />
                   </td>
                   <td className="px-4 py-4">
                     <p className="text-xl font-medium lg:text-3xl">{row.team_name}</p>
-                    <RowNote row={row} quorum={results.quorum} />
+                    <RowNote row={row} quorum={quorum} />
                   </td>
                   {showCriteria &&
                     criteria.map((c) => (

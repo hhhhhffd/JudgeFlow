@@ -106,6 +106,8 @@ export default function StageScreen() {
 function StageBoard({ data, widget, offline }: { data: StageResponse; widget: boolean; offline: boolean }) {
   const { event, stage, rows } = data
   const [seen] = useState(() => new Set(stage.view === 'waiting' ? [] : rows.map((r) => r.team_id)))
+  // Rows of one track only; the server resolves a missing stage track to the first group.
+  const trackName = data.tracks.length > 0 ? (data.tracks.find((t) => t.id === (stage.track_id ?? rows[0]?.track_id)) ?? data.tracks[0])?.name : undefined
   const teamsLabel = event.teams_label_enabled && event.teams_label?.trim() ? event.teams_label.trim() : stageText.team
 
   let body: React.ReactNode
@@ -123,6 +125,7 @@ function StageBoard({ data, widget, offline }: { data: StageResponse; widget: bo
         <header className="mb-[2.5vmin] flex flex-col gap-2">
           <p className="text-[1rem] font-semibold tracking-[0.28em] text-signal uppercase">{stageText.eyebrow}</p>
           <h1 className="text-[clamp(1.8rem,3.4vw,3.4rem)] leading-[1.05] font-extrabold tracking-tight text-balance">{event.title}</h1>
+          {trackName && <p className="text-[clamp(1.2rem,2vw,2rem)] font-semibold text-signal">{trackName}</p>}
         </header>
       )}
       {body}

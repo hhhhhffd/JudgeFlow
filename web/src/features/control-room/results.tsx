@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { eventsApi } from '@/api/endpoints'
-import type { RankingMode } from '@/api/types'
+import type { Criterion, RankingMode, RankingRow, Track } from '@/api/types'
 import { EmptyState, ErrorState } from '@/components/state-views'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { cr } from '@/i18n/control-room'
 import { errorText } from '@/lib/errors'
 import { formatDateTime, formatX100 } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { criteriaOfGroup, groupByTrack } from '@/lib/tracks'
 import { useFull } from './context'
 
 export function Results() {
@@ -21,6 +22,10 @@ export function Results() {
   const mode = picked ?? (settled ? 'official' : 'provisional')
   const [open, setOpen] = useState<Set<string>>(new Set())
   const results = useQuery({ queryKey: ['cr', event.id, 'results', mode], queryFn: () => eventsApi.results(event.id, mode) })
+
+  const tracks = results.data?.tracks ?? []
+  const groups = groupByTrack(results.data?.rows ?? [], tracks)
+  const heading = (track: Track | null) => track?.name ?? cr.results.noTrack
 
   const toggle = (id: string) =>
     setOpen((s) => {
@@ -65,84 +70,95 @@ export function Results() {
       {results.data && results.data.rows.every((r) => r.score_x100 == null) && <EmptyState title={cr.results.empty} text={cr.results.emptyText} />}
       {results.data && results.data.rows.some((r) => r.score_x100 != null) && (
         <>
-          <div className="rounded-xl border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10" />
-                  <TableHead className="w-16">{cr.results.rank}</TableHead>
-                  <TableHead>{cr.results.team}</TableHead>
-                  <TableHead className="text-right">{cr.results.score}</TableHead>
-                  <TableHead className="text-right">{cr.results.sheets}</TableHead>
-                  {criteria.map((c) => (
-                    <TableHead key={c.id} className="hidden text-right xl:table-cell">
-                      <span className="ml-auto block max-w-24 truncate" title={c.name}>
-                        {c.name}
-                      </span>
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {results.data.rows.map((row) => {
-                  const expanded = open.has(row.team_id)
-                  const name = row.team_name
-                  return (
-                    <Fragment key={row.team_id}>
-                      <TableRow>
-                        <TableCell className="p-1">
-                          <Button variant="ghost" size="icon" aria-expanded={expanded} aria-label={`${expanded ? cr.results.collapse : cr.results.expand}: ${name}`} onClick={() => toggle(row.team_id)}>
-                            {expanded ? <ChevronDown /> : <ChevronRight />}
-                          </Button>
-                        </TableCell>
-                        <TableCell className="num font-mono">
-                          {row.rank ?? '—'}
-                          {row.tie && (
-                            <span title={cr.results.tie} aria-label={cr.results.tie} className="ml-1 inline-block rounded bg-signal px-1 text-[11px] font-semibold text-signal-foreground">
-                              =
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="max-w-48 font-medium">
-                          <span className="block truncate" title={name}>{name}</span>
-                          <span className="mt-0.5 block">
-                            {row.score_x100 == null ? (
-                              <span className="text-xs font-normal text-muted-foreground">{cr.results.noScore}</span>
-                            ) : (
-                              <Badge variant={row.meets_quorum ? 'success' : 'warning'}>{row.meets_quorum ? cr.results.quorumOk : cr.results.quorumNo}</Badge>
-                            )}
-                          </span>
-                        </TableCell>
-                        <TableCell className="num text-right font-mono text-base font-medium">{formatX100(row.score_x100)}</TableCell>
-                        <TableCell className="num text-right font-mono">{row.sheets}</TableCell>
-                        {criteria.map((c) => (
-                          <TableCell key={c.id} className="num hidden text-right font-mono xl:table-cell">
-                            {formatX100(row.criteria.find((a) => a.criterion_id === c.id)?.avg_x100)}
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                      {expanded && (
-                        <TableRow className="bg-muted/40 hover:bg-muted/40">
-                          <TableCell />
-                          <TableCell colSpan={4 + criteria.length} className="whitespace-normal">
-                            <div className="grid gap-4 py-1 sm:grid-cols-2">
-                              <Breakdown title={cr.results.byCriteria} empty={cr.results.noJudges} items={criteria.map((c) => ({ key: c.id, label: c.name, value: row.criteria.find((a) => a.criterion_id === c.id)?.avg_x100 ?? null }))} />
-                              <Breakdown title={cr.results.byJudges} empty={cr.results.noJudges} items={row.judges.map((j) => ({ key: j.judge_id, label: j.judge_name, value: j.score_x100 }))} />
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </Fragment>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </div>
+          {groups.map((g) => (
+            <section key={g.track?.id ?? 'none'} aria-label={heading(g.track)} className="grid gap-2">
+              {tracks.length > 0 && <h2 className="text-base font-semibold">{heading(g.track)}</h2>}
+              <ResultsTable rows={g.rows} criteria={criteriaOfGroup(criteria, g.track)} open={open} toggle={toggle} />
+            </section>
+          ))}
           <p className="text-xs text-muted-foreground">
-            {cr.results.quorumNote(results.data.quorum)} {cr.results.tiesNote}
+            {cr.results.quorumNote(results.data.quorum)} {tracks.length > 0 && cr.results.trackNote} {cr.results.tiesNote}
           </p>
         </>
       )}
+    </div>
+  )
+}
+
+function ResultsTable({ rows, criteria, open, toggle }: { rows: RankingRow[]; criteria: Criterion[]; open: Set<string>; toggle: (id: string) => void }) {
+  return (
+    <div className="rounded-xl border bg-card">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-10" />
+            <TableHead className="w-16">{cr.results.rank}</TableHead>
+            <TableHead>{cr.results.team}</TableHead>
+            <TableHead className="text-right">{cr.results.score}</TableHead>
+            <TableHead className="text-right">{cr.results.sheets}</TableHead>
+            {criteria.map((c) => (
+              <TableHead key={c.id} className="hidden text-right xl:table-cell">
+                <span className="ml-auto block max-w-24 truncate" title={c.name}>
+                  {c.name}
+                </span>
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => {
+            const expanded = open.has(row.team_id)
+            const name = row.team_name
+            return (
+              <Fragment key={row.team_id}>
+                <TableRow>
+                  <TableCell className="p-1">
+                    <Button variant="ghost" size="icon" aria-expanded={expanded} aria-label={`${expanded ? cr.results.collapse : cr.results.expand}: ${name}`} onClick={() => toggle(row.team_id)}>
+                      {expanded ? <ChevronDown /> : <ChevronRight />}
+                    </Button>
+                  </TableCell>
+                  <TableCell className="num font-mono">
+                    {row.rank ?? '—'}
+                    {row.tie && (
+                      <span title={cr.results.tie} aria-label={cr.results.tie} className="ml-1 inline-block rounded bg-signal px-1 text-[11px] font-semibold text-signal-foreground">
+                        =
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="max-w-48 font-medium">
+                    <span className="block truncate" title={name}>{name}</span>
+                    <span className="mt-0.5 block">
+                      {row.score_x100 == null ? (
+                        <span className="text-xs font-normal text-muted-foreground">{cr.results.noScore}</span>
+                      ) : (
+                        <Badge variant={row.meets_quorum ? 'success' : 'warning'}>{row.meets_quorum ? cr.results.quorumOk : cr.results.quorumNo}</Badge>
+                      )}
+                    </span>
+                  </TableCell>
+                  <TableCell className="num text-right font-mono text-base font-medium">{formatX100(row.score_x100)}</TableCell>
+                  <TableCell className="num text-right font-mono">{row.sheets}</TableCell>
+                  {criteria.map((c) => (
+                    <TableCell key={c.id} className="num hidden text-right font-mono xl:table-cell">
+                      {formatX100(row.criteria.find((a) => a.criterion_id === c.id)?.avg_x100)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+                {expanded && (
+                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                    <TableCell />
+                    <TableCell colSpan={4 + criteria.length} className="whitespace-normal">
+                      <div className="grid gap-4 py-1 sm:grid-cols-2">
+                        <Breakdown title={cr.results.byCriteria} empty={cr.results.noJudges} items={criteria.map((c) => ({ key: c.id, label: c.name, value: row.criteria.find((a) => a.criterion_id === c.id)?.avg_x100 ?? null }))} />
+                        <Breakdown title={cr.results.byJudges} empty={cr.results.noJudges} items={row.judges.map((j) => ({ key: j.judge_id, label: j.judge_name, value: j.score_x100 }))} />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            )
+          })}
+        </TableBody>
+      </Table>
     </div>
   )
 }

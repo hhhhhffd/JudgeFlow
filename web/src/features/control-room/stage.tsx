@@ -25,7 +25,7 @@ function ownsKey(t: EventTarget | null) {
 }
 
 export function StageTab() {
-  const { event } = useFull()
+  const { event, tracks } = useFull()
   const t = cr.stage
   const available = event.status === 'finalized' || event.status === 'published'
   const state = useQuery({ queryKey: ['cr', event.id, 'stage'], queryFn: () => publicApi.stage(event.id), enabled: available })
@@ -33,7 +33,7 @@ export function StageTab() {
   const revealed = state.data?.stage.revealed ?? event.stage_revealed
 
   const reveal = useEventMutation((action: StageAction) => eventsApi.revealStage(event.id, action))
-  const update = useEventMutation((body: { stage_view?: StageView; stage_top_n?: number }) => eventsApi.update(event.id, body))
+  const update = useEventMutation((body: { stage_view?: StageView; stage_top_n?: number; stage_track_id?: string | null }) => eventsApi.update(event.id, body))
 
   const canNext = available && revealed < total && !reveal.isPending
   const canPrev = available && revealed > 0 && !reveal.isPending
@@ -123,6 +123,23 @@ export function StageTab() {
                 </Select>
                 <p className="text-sm text-muted-foreground">{t.topNNote}</p>
               </div>
+              {tracks.length > 0 && (
+                <div className="grid gap-2">
+                  <p id="stage-track-l" className="text-sm font-medium">{t.trackLabel}</p>
+                  {/* null on the server means the first group, so the first track is the visible default. */}
+                  <Select value={event.stage_track_id ?? tracks[0]!.id} onValueChange={(v) => update.mutate({ stage_track_id: v })} disabled={update.isPending}>
+                    <SelectTrigger aria-labelledby="stage-track-l" className="w-full sm:w-64">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tracks.map((tr) => (
+                        <SelectItem key={tr.id} value={tr.id}>{tr.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground">{t.trackNote}</p>
+                </div>
+              )}
             </section>
 
             <section aria-labelledby="stage-reveal-h" className="grid gap-3 rounded-xl border bg-card p-5">

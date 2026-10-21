@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Check, ExternalLink, Minus } from 'lucide-react'
+import { Check, ExternalLink, Minus, ShieldAlert } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { eventsApi } from '@/api/endpoints'
 import type { JudgeSummary, Visibility } from '@/api/types'
@@ -14,7 +14,9 @@ import { cn } from '@/lib/utils'
 import { useEventMutation, useFull, useNow } from './context'
 import { cellState, computeKpis, formatAgo, type CellState } from './lib'
 
-const CELL_STYLE: Record<CellState, string> = {
+const CELL_STYLE: Record<CellState | 'unassigned' | 'conflict', string> = {
+  unassigned: 'border border-dashed bg-transparent text-muted-foreground/50',
+  conflict: 'bg-destructive/10 text-destructive',
   submitted: 'bg-success-soft text-success',
   partial: 'bg-warning-soft text-warning',
   empty: 'bg-muted text-muted-foreground',
@@ -65,7 +67,8 @@ function Readiness() {
 }
 
 function Monitoring() {
-  const { event } = useFull()
+  const { event, assignments } = useFull()
+  const hasAssignments = assignments.length > 0
   const matrix = useQuery({ queryKey: ['cr', event.id, 'matrix'], queryFn: () => eventsApi.matrix(event.id) })
 
   if (matrix.isPending) return <Skeleton className="h-72 rounded-xl" />
@@ -124,14 +127,13 @@ function Monitoring() {
                         const cell = m.cells.find((c) => c.judge_id === j.id && c.team_id === t.id)
                         const scored = cell?.scored ?? 0
                         const total = cell?.total ?? 0
-                        const state = cellState(j, scored, total)
+                        // A conflict wins over an assignment; with assignments present, a team without one is outside the judge's set.
+                        const kind = cell?.conflict ? 'conflict' : hasAssignments && !cell?.assigned ? 'unassigned' : cellState(j, scored, total)
+                        const title = kind === 'conflict' ? cr.overview.cellConflict(j.name, t.name) : kind === 'unassigned' ? cr.overview.cellNotAssigned(j.name, t.name) : cr.overview.cellTitle(j.name, t.name, scored, total)
                         return (
                           <td key={t.id} className="p-1">
-                            <div
-                              title={cr.overview.cellTitle(j.name, t.name, scored, total)}
-                              className={cn('num mx-auto flex h-9 min-w-12 items-center justify-center rounded-md font-mono text-xs', CELL_STYLE[state])}
-                            >
-                              {scored}/{total}
+                            <div title={title} className={cn('num mx-auto flex h-9 min-w-12 items-center justify-center rounded-md font-mono text-xs', CELL_STYLE[kind])}>
+                              {kind === 'conflict' ? <ShieldAlert className="size-4" aria-label={title} /> : kind === 'unassigned' ? <span aria-label={title}>—</span> : `${scored}/${total}`}
                             </div>
                           </td>
                         )
@@ -148,6 +150,18 @@ function Monitoring() {
                   {cr.overview.legend[s]}
                 </li>
               ))}
+              {hasAssignments && (
+                <li className="flex items-center gap-1.5">
+                  <span className={cn('size-3 rounded-sm', CELL_STYLE.unassigned)} aria-hidden />
+                  {cr.overview.legendNotAssigned}
+                </li>
+              )}
+              {m.cells.some((c) => c.conflict) && (
+                <li className="flex items-center gap-1.5">
+                  <span className={cn('size-3 rounded-sm', CELL_STYLE.conflict)} aria-hidden />
+                  {cr.overview.legendConflict}
+                </li>
+              )}
             </ul>
           </>
         )}

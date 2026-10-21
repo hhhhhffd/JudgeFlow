@@ -18,16 +18,20 @@ import { ru } from '@/i18n/ru'
 import { errorText } from '@/lib/errors'
 import { ConfirmDialog } from './confirm-dialog'
 import { useEventMutation, useFull, useNow } from './context'
-import { formatAgo, parseNames } from './lib'
+import { Distribution } from './distribution'
+import { formatAgo, judgeTotal, parseNames } from './lib'
+import { SheetImport } from './sheet-import'
+import { pairSet } from '@/lib/tracks'
 
 type Action = { kind: 'rename' | 'rotate' | 'reopen' | 'delete'; judge: JudgeSummary }
 
 export function JudgesSection() {
-  const { event, judges, teams, criteria } = useFull()
+  const { event, judges, teams, criteria, assignments, conflicts } = useFull()
   const frozen = event.status === 'finalized' || event.status === 'published'
   const [links, setLinks] = useState<JudgeWithLink[] | null>(null)
   const [action, setAction] = useState<Action | null>(null)
-  const total = teams.length * criteria.length
+  const assigned = pairSet(assignments)
+  const conflictSet = pairSet(conflicts)
   const now = useNow()
   const toggle = useEventMutation((j: JudgeSummary) => eventsApi.updateJudge(j.id, { is_active: !j.is_active }))
 
@@ -47,7 +51,9 @@ export function JudgesSection() {
           <EmptyState title={cr.judges.empty} text={cr.judges.emptyText} />
         ) : (
           <ul className="divide-y rounded-xl border bg-card">
-            {judges.map((j) => (
+            {judges.map((j) => {
+              const total = judgeTotal(j.id, teams, criteria, assigned, conflictSet)
+              return (
               <li key={j.id} className="flex items-center gap-3 p-3 pl-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -92,10 +98,13 @@ export function JudgesSection() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
       </section>
+      <Distribution />
+      <SheetImport />
       {links && <LinksDialog links={links} onClose={() => setLinks(null)} />}
       {action && <JudgeActionDialog action={action} onClose={() => setAction(null)} onLink={(l) => setLinks([l])} />}
     </div>

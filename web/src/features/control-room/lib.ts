@@ -1,14 +1,31 @@
-import type { EventStatus, JudgeSummary, Matrix, TeamInput } from '@/api/types'
+import type { Criterion, EventStatus, JudgeSummary, Matrix, Team, TeamInput, Track } from '@/api/types'
+import { criterionApplies, inJudgeSet, pairKey } from '@/lib/tracks'
 
-/** Paste import: one team per line, optional `name<TAB>description`. Blank lines are skipped. */
-export function parseTeamsPaste(text: string): TeamInput[] {
-  const out: TeamInput[] = []
+export type PasteRow = TeamInput & {
+  /** Track name from the third column that matched no track: shown as a warning, the team is added without a track. */
+  unknown_track?: string
+}
+
+/**
+ * Paste import: one team per line, `name<TAB>description<TAB>track`; the last two are optional.
+ * Track names are matched case-insensitively. Blank lines are skipped.
+ */
+export function parseTeamsPaste(text: string, tracks: Track[] = []): PasteRow[] {
+  const byName = new Map(tracks.map((t) => [t.name.trim().toLowerCase(), t.id]))
+  const out: PasteRow[] = []
   for (const line of text.split(/\r\n|\r|\n/)) {
-    const [rawName = '', ...rest] = line.split('\t')
+    const [rawName = '', rawDescription = '', rawTrack = ''] = line.split('\t')
     const name = rawName.trim()
     if (!name) continue
-    const description = rest.join(' ').trim()
-    out.push(description ? { name, description } : { name })
+    const description = rawDescription.trim()
+    const trackName = rawTrack.trim()
+    const row: PasteRow = description ? { name, description } : { name }
+    if (trackName) {
+      const id = byName.get(trackName.toLowerCase())
+      if (id) row.track_id = id
+      else row.unknown_track = trackName
+    }
+    out.push(row)
   }
   return out
 }
@@ -63,6 +80,7 @@ export interface Kpis {
 export function computeKpis(m: Matrix): Kpis {
   const active = new Set(m.judges.filter((j) => j.is_active).map((j) => j.id))
   const scoredTeams = new Set<string>()
+  const coveredTeams = new Set<string>()
   let scored = 0
   let total = 0
   for (const c of m.cells) {
@@ -70,11 +88,13 @@ export function computeKpis(m: Matrix): Kpis {
     if (active.has(c.judge_id)) {
       scored += c.scored
       total += c.total
+      if (c.total > 0) coveredTeams.add(c.team_id)
     }
   }
   return {
     teamsWithScores: scoredTeams.size,
-    teamsTotal: m.teams.length,
+    // Teams nobody active has to score (unassigned, conflicts) do not count.
+    teamsTotal: coveredTeams.size,
     judgesSubmitted: m.judges.filter((j) => j.is_active && j.submitted_at != null).length,
     judgesActive: active.size,
     attention: m.judges.filter((j) => !j.is_active || j.pending_count > 0).length,
@@ -103,3 +123,22 @@ export function formatAgo(ms: number | null, now: number): string {
   if (h < 24) return `${h} ч назад`
   return `${Math.round(h / 24)} дн назад`
 }
+
+/** Teams a judge works on (SPEC §12): all while the event has no assignments, else the assigned ones, minus conflicts. */
+export function judgeTeams(judgeId: string, teams: Team[], assigned: Set<string>, conflicts: Set<string>): Team[] {
+  return teams.filter((t) => inJudgeSet(judgeId, t.id, assigned, conflicts))
+}
+
+/** Number of score cells a judge has to fill: judge's teams × criteria that apply to each team. */
+export function judgeTotal(judgeId: string, teams: Team[], criteria: Criterion[], assigned: Set<string>, conflicts: Set<string>): number {
+  return judgeTeams(judgeId, teams, assigned, conflicts).reduce((n, t) => n + criteria.filter((c) => criterionApplies(c, t)).length, 0)
+}
+
+/** Only a complete set of assignments equal to "everything" is stored as the empty list. */
+export function assignmentPairs(judges: { id: string }[], teams: Team[], assigned: Set<string>): { judge_id: string; team_id: string }[] {
+  const all = judges.every((j) => teams.every((t) => assigned.has(pairKey(j.id, t.id))))
+  if (all) return []
+  return judges.flatMap((j) => teams.filter((t) => assigned.has(pairKey(j.id, t.id))).map((t) => ({ judge_id: j.id, team_id: t.id })))
+}
+
+export const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x))
