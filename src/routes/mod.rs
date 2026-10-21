@@ -21,6 +21,7 @@ pub mod invites;
 pub mod judge;
 pub mod judges;
 pub mod public;
+pub mod rounds;
 pub mod setup;
 pub mod teams;
 pub mod tracks;
@@ -42,6 +43,7 @@ fn api() -> Router<AppState> {
         .merge(admins::router())
         .merge(invites::router())
         .merge(events::router())
+        .merge(rounds::router())
         .merge(teams::router())
         .merge(tracks::router())
         .merge(assignments::router())

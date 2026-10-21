@@ -31,7 +31,7 @@ pub fn router() -> Router<AppState> {
         .route("/judges/{id}/reopen", post(reopen))
 }
 
-fn judge_link(state: &AppState, headers: &HeaderMap, token: &str) -> String {
+pub fn judge_link(state: &AppState, headers: &HeaderMap, token: &str) -> String {
     format!("{}/j/{token}", state.config.base_url(headers))
 }
 
