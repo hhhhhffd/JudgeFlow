@@ -78,6 +78,13 @@ export async function saveSession(k: string, session: JudgeSession) {
   await (await db()).put('sessions', { k, session, saved_at: Date.now() })
 }
 
+/** Deletes the cached session and every score row (synced or not) stored under this token. */
+export async function forgetDesk(k: string) {
+  const d = await db()
+  const tx = d.transaction(['sessions', 'rows'], 'readwrite')
+  await Promise.all([tx.objectStore('sessions').delete(k), tx.objectStore('rows').delete(IDBKeyRange.bound([k], [k, '\uffff', '\uffff'])), tx.done])
+}
+
 /** Read-compare-write in one transaction, so a concurrent tab's newer unsynced edit is never clobbered. */
 export async function writeRows(k: string, upserts: LocalRow[], deletes: RowRef[]) {
   const d = await db()

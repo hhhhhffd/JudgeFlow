@@ -21,7 +21,7 @@ import {
   type LocalRow,
   type Rows,
 } from './scoring'
-import { adoptOrphans, loadDesk, saveSession, tokenKey, writeRows } from './storage'
+import { adoptOrphans, forgetDesk, loadDesk, saveSession, tokenKey, writeRows } from './storage'
 
 export const SYNC_DEBOUNCE_MS = 1500
 const REFRESH_DEBOUNCE_MS = 500
@@ -96,6 +96,13 @@ export class DeskController {
     window.addEventListener('offline', this.onOffline)
     document.addEventListener('visibilitychange', this.onVisibility)
     void this.boot()
+  }
+
+  /** Stops the desk and erases this token's cached session and score rows from the device. */
+  async forget() {
+    this.stop()
+    await this.writes
+    await forgetDesk(this.k)
   }
 
   stop() {

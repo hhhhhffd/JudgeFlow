@@ -47,7 +47,15 @@ function DeskRoot({ token, onForget }: { token: string; onForget: () => void }) 
     document.title = title ? `${title} — ${judgeText.title}` : judgeText.title
   }, [title])
 
-  if (state.phase === 'revoked') return <RevokedScreen unsynced={pendingCount(state.rows)} onRecheck={() => controller.recheck()} onForget={onForget} />
+  const forget = () => {
+    // Forgetting must really erase the unsynced edits the warning talks about, or they could be adopted later.
+    controller
+      .forget()
+      .catch((e) => console.error('judge: cannot erase device storage', e))
+      .finally(onForget)
+  }
+
+  if (state.phase === 'revoked') return <RevokedScreen unsynced={pendingCount(state.rows)} onRecheck={() => controller.recheck()} onForget={forget} />
   if (state.phase === 'failed') return <FailedScreen message={state.failure} onRetry={() => controller.recheck()} />
   if (!state.session) return <LoadingScreen />
   return <Desk controller={controller} session={state.session} />
