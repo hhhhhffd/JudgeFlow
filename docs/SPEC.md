@@ -370,12 +370,13 @@ comparisons(id PK, event_id FK CASCADE, judge_id FK CASCADE, team_a FK CASCADE, 
 - **Ranking** (`src/pairwise.rs`, pure): included comparisons = decided comparisons of active judges, submitted only for
   `official`. Bradley–Terry strengths by the MM algorithm (ties count as half a win for each side), teams with no
   included comparisons are unranked; strengths normalized so the geometric mean is 1; iterate until max relative change
-  < 1e-12 or 10 000 iterations; `score_x100` = 100 × p(team beats an average team) = 100·s/(s+1), rounded half-up.
+  < 1e-12 or 10 000 iterations; `score_x100` = p(team beats an average team) on the 0–100 scale in hundredths = 10 000·s/(s+1), rounded half-up
+  (so an average team scores 50,00).
   Determinism: iterate teams in input order; ties: scores equal after rounding to 1e-9 share a rank.
   To keep BT finite, add one virtual tie against a virtual average team (strength 1) for every ranked team.
   `sheets` = number of included comparisons involving the team; `quorum` applies to it.
   Rows add `wins`, `losses`, `ties` (serde default 0) for explainability; `criteria` is `[]`; `judges` lists, per judge,
-  their win rate ×100 for that team.
+  their win rate for that team on the 0–100 scale in hundredths (ties count 0.5).
 
 ### Normalization (rubric mode only, opt-in)
 - `events.normalization = 'center'`: removes per-judge leniency. Per ranking group: for each included judge,

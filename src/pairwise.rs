@@ -170,7 +170,9 @@ pub fn compute(input: &Input, mode: Mode) -> PairwiseRanking {
             i,
             Some(rank),
             tied_prev || tied_next,
-            Some(round_half_up(100.0 * strengths[i] / (strengths[i] + 1.0))),
+            Some(round_half_up(
+                10_000.0 * strengths[i] / (strengths[i] + 1.0),
+            )),
             sheets[i],
             &judge_tally[i],
         ));
@@ -218,7 +220,7 @@ fn make_row(
             .iter()
             .map(|(&j, &(points, count))| JudgeScore {
                 judge_id: input.judges[j].id.clone(),
-                score_x100: round_half_up(100.0 * points / f64::from(count)),
+                score_x100: round_half_up(10_000.0 * points / f64::from(count)),
             })
             .collect(),
         track_id: None,
@@ -405,7 +407,7 @@ mod tests {
             row(&r, "A").judges,
             [JudgeScore {
                 judge_id: s("j1"),
-                score_x100: 100
+                score_x100: 10_000
             }]
         );
     }
@@ -421,7 +423,7 @@ mod tests {
         );
         let r = compute(&inp, Mode::Official);
         for x in &r.ranking.rows {
-            assert_eq!((x.rank, x.tie, x.score_x100), (Some(1), true, Some(50)));
+            assert_eq!((x.rank, x.tie, x.score_x100), (Some(1), true, Some(5000)));
         }
     }
 
@@ -429,11 +431,11 @@ mod tests {
     fn ties_count_half() {
         let tied = input(&["A", "B"], vec![cmp("j1", "A", "B", Winner::Tie)]);
         let r = compute(&tied, Mode::Official);
-        assert_eq!(row(&r, "A").score_x100, Some(50));
+        assert_eq!(row(&r, "A").score_x100, Some(5000));
         assert!(row(&r, "A").tie);
         let a = r.stats.iter().find(|x| x.team_id == "A").unwrap();
         assert_eq!((a.wins, a.losses, a.ties), (0, 0, 1));
-        assert_eq!(row(&r, "A").judges[0].score_x100, 50);
+        assert_eq!(row(&r, "A").judges[0].score_x100, 5000);
 
         // One win + one tie beats a lone win only against the same opponent's record.
         let mixed = input(
@@ -446,7 +448,7 @@ mod tests {
         let r = compute(&mixed, Mode::Official);
         assert_eq!(row(&r, "A").rank, Some(1));
         assert_eq!(row(&r, "B").rank, Some(2));
-        assert_eq!(row(&r, "A").judges[0].score_x100, 75);
+        assert_eq!(row(&r, "A").judges[0].score_x100, 7500);
     }
 
     #[test]
@@ -530,7 +532,7 @@ mod tests {
         );
         let r = compute(&inp, Mode::Official);
         for x in &r.ranking.rows {
-            assert_eq!((x.rank, x.tie, x.score_x100), (Some(1), true, Some(50)));
+            assert_eq!((x.rank, x.tie, x.score_x100), (Some(1), true, Some(5000)));
         }
     }
 
