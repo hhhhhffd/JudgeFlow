@@ -1,6 +1,7 @@
 //! Judge-facing API (Bearer token): session, score sync, submit/unsubmit, heartbeat, stream.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -349,10 +350,33 @@ async fn heartbeat(
         .bind(&auth.judge_id)
         .execute(&state.pool)
         .await?;
-    state.sse.notify(&auth.event_id, ChangeKind::Judges);
+    state.sse.notify(&auth.event_id, ChangeKind::Presence);
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// How often an open judge stream re-checks that its token is still valid.
+const STREAM_RECHECK: Duration = Duration::from_secs(30);
+
+/// The stream ends when the judge is deactivated or the token is rotated, so a revoked token
+/// stops receiving hints within `STREAM_RECHECK`.
 async fn stream(State(state): State<AppState>, auth: JudgeAuth) -> impl IntoResponse {
-    state.sse.stream(&auth.event_id)
+    let pool = state.pool.clone();
+    let event_id = auth.event_id.clone();
+    let stop = async move {
+        loop {
+            tokio::time::sleep(STREAM_RECHECK).await;
+            let valid = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM judges WHERE id = ? AND token_hash = ? AND is_active = 1",
+            )
+            .bind(&auth.judge_id)
+            .bind(&auth.token_hash)
+            .fetch_one(&pool)
+            .await;
+            // A transient DB error keeps the stream open; the next tick re-checks.
+            if matches!(valid, Ok(0)) {
+                return;
+            }
+        }
+    };
+    state.sse.stream_until(&event_id, stop)
 }

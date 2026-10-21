@@ -362,6 +362,7 @@ async fn admin_reopen_allows_edits_again() {
 #[tokio::test]
 async fn heartbeat_updates_last_seen_and_pending() {
     let fx = Fixture::new(1, true).await;
+    let mut rx = fx.state.sse.subscribe(&fx.event_id);
     let resp = fx
         .judge(
             0,
@@ -371,6 +372,11 @@ async fn heartbeat_updates_last_seen_and_pending() {
         )
         .await;
     assert_eq!(resp.status, StatusCode::NO_CONTENT);
+    assert_eq!(rx.try_recv().unwrap(), judgeflow::sse::ChangeKind::Presence);
+    assert!(
+        rx.try_recv().is_err(),
+        "heartbeat must notify presence only"
+    );
     let judge = fx.event().await["judges"][0].clone();
     assert_eq!(judge["pending_count"], 3);
     assert!(judge["last_seen_at"].is_i64());
