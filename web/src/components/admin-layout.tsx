@@ -34,7 +34,7 @@ export function AdminLayout() {
           <NavLink to="/" aria-label={ru.app.name} className="shrink-0">
             <Logo compact />
           </NavLink>
-          <nav className="flex min-w-0 flex-1 items-center gap-0.5 sm:gap-1" aria-label="Main">
+          <nav className="flex min-w-0 flex-1 items-center gap-0.5 sm:gap-1" aria-label={ru.nav.main}>
             <NavLink to="/" end className={navClass}>
               {ru.nav.events}
             </NavLink>
