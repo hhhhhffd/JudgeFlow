@@ -275,7 +275,8 @@ events.stage_track_id NULL FK→tracks ON DELETE SET NULL  -- which track the st
 
 Rules:
 - **Team criteria** = criteria with `track_id IS NULL` or `= team.track_id`.
-- **Judge's teams** = assigned teams if the judge has ≥1 assignment, otherwise all teams; minus conflicts
+- **Judge's teams** = all teams when the event has no assignments at all; once the event has ≥1 assignment,
+  only the judge's assigned teams (a judge without assignments judges nothing); minus conflicts
   (a conflict always wins). A judge never sees, scores or is counted for teams outside this set.
 - A judge's **sheet for a team** is complete when every team criterion is scored. Submit requires complete
   sheets for all of the judge's teams; `scored_count`/matrix totals use the judge's teams × team criteria.
@@ -286,7 +287,7 @@ Rules:
   engine with that group's criteria. The resulting `Ranking.rows` are concatenated in group order; each `Row`
   gains `track_id: string | null` (serde default `null`, so older snapshots still parse) and ranks restart per
   track. Responses that return a ranking also return `tracks: [{id, name}]`.
-- Stage (§11) shows the group selected by `stage_track_id` (`null` = teams without a track / the only group);
+- Stage (§11) shows the group selected by `stage_track_id` (`null` = the first group in order);
   reveal groups are counted within that track; changing `stage_track_id` resets `stage_revealed`.
 - Tracks, team/criterion `track_id` are composition: editable only in `draft`. Assignments and conflicts are
   editable in any status except `finalized`/`published` (late judge, discovered conflict); audited; SSE `judges`.
