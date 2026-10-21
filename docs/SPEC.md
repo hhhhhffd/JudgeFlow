@@ -36,6 +36,10 @@ Source of truth for the rewrite. The previous implementation lives on the `v1` b
   - `judgeflow admin reset-totp <name>` — new TOTP secret, kills that admin's sessions, prints QR
     (terminal unicode) + otpauth URI. The only way to reset the owner's TOTP.
   - `judgeflow admin set-owner <name>` — transfers the owner role.
+  - `judgeflow backup <dest-file>` — consistent online copy of the database via `VACUUM INTO` (safe while
+    the server runs in WAL mode). Refuses to overwrite an existing `<dest-file>` or `<dest-file>.uploads/`.
+    Copies `DATA_DIR/uploads/` to `<dest-file>.uploads/` if present. `secret.key` is NOT copied: back it up
+    separately unless `JUDGEFLOW_SECRET_KEY` is used (the CLI reminds about it).
 - Routing: `/api/**` → API; everything else → embedded static files with SPA fallback to `index.html`.
 - Deployment targets: plain binary, Docker (multi-stage build, runtime image just runs the binary),
   behind Cloudflare Tunnel (HTTPS), or LAN without internet (HTTP; no Service Worker there).

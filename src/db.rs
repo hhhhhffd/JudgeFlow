@@ -36,3 +36,37 @@ pub async fn begin_write(
 ) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, sqlx::Error> {
     pool.begin_with("BEGIN IMMEDIATE").await
 }
+
+/// Consistent online copy of the database via `VACUUM INTO` (safe while the server writes in WAL
+/// mode). Also copies `uploads/` to `<dest>.uploads/` when present. Refuses to overwrite `dest`.
+pub async fn backup(pool: &SqlitePool, data_dir: &Path, dest: &Path) -> Result<()> {
+    anyhow::ensure!(!dest.exists(), "{} already exists", dest.display());
+    let uploads_dest = {
+        let mut name = dest.as_os_str().to_owned();
+        name.push(".uploads");
+        std::path::PathBuf::from(name)
+    };
+    anyhow::ensure!(
+        !uploads_dest.exists(),
+        "{} already exists",
+        uploads_dest.display()
+    );
+    let dest_str = dest.to_str().context("destination path must be UTF-8")?;
+    sqlx::query("VACUUM INTO ?")
+        .bind(dest_str)
+        .execute(pool)
+        .await
+        .context("VACUUM INTO failed")?;
+    let uploads = data_dir.join("uploads");
+    if uploads.is_dir() {
+        std::fs::create_dir(&uploads_dest)
+            .with_context(|| format!("creating {}", uploads_dest.display()))?;
+        for entry in std::fs::read_dir(&uploads)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                std::fs::copy(entry.path(), uploads_dest.join(entry.file_name()))?;
+            }
+        }
+    }
+    Ok(())
+}

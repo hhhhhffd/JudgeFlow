@@ -27,6 +27,11 @@ enum Command {
     /// Administrator maintenance.
     #[command(subcommand)]
     Admin(AdminCommand),
+    /// Write a consistent copy of the database (and `uploads/`) while the server may be running.
+    Backup {
+        /// New file for the database copy; uploads go to `<dest>.uploads/`.
+        dest: std::path::PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -52,6 +57,21 @@ pub async fn run() -> Result<()> {
         Command::Admin(command) => {
             let state = open_state(cli.config).await?;
             run_admin(&state, command).await
+        }
+        Command::Backup { dest } => {
+            let state = open_state(cli.config).await?;
+            crate::db::backup(&state.pool, &state.config.data_dir, &dest).await?;
+            println!("Database copied to {}", dest.display());
+            if state.config.data_dir.join("uploads").is_dir() {
+                println!("Uploads copied to {}.uploads/", dest.display());
+            }
+            if state.config.secret_key.is_none() {
+                println!(
+                    "Back up {} separately: without it TOTP secrets in the copy cannot be decrypted.",
+                    state.config.data_dir.join("secret.key").display()
+                );
+            }
+            Ok(())
         }
     }
 }

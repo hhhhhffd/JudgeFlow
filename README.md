@@ -79,7 +79,7 @@ make build                      # web/dist + cargo build --release
 | `JUDGEFLOW_TRUST_PROXY` | `false` | брать IP клиента из `CF-Connecting-IP` / `X-Forwarded-For` (для лимита попыток входа); включайте только за прокси или туннелем; приложение должно быть недоступно напрямую (порт на `127.0.0.1` или не публиковать), иначе IP можно подделать |
 | `RUST_LOG` | `info` | уровень логов |
 
-Резервная копия — это каталог `DATA_DIR` (при остановленном сервере или через `sqlite3 .backup`).
+Резервное копирование — см. «Администрирование» ниже.
 
 ## Варианты развёртывания
 
@@ -96,7 +96,17 @@ make build                      # web/dist + cargo build --release
 judgeflow admin list
 judgeflow admin reset-totp <name>   # новый QR; единственный способ сбросить TOTP владельца
 judgeflow admin set-owner <name>
+judgeflow backup <файл>             # согласованная копия БД на работающем сервере
 ```
+
+### Резервная копия
+
+`judgeflow backup /backups/judgeflow-2026-01-01.db` делает согласованную копию базы через `VACUUM INTO`
+(можно при работающем сервере) и, если есть `DATA_DIR/uploads/`, копирует её в `<файл>.uploads/`.
+Существующий файл не перезаписывается. Файл `DATA_DIR/secret.key` копируется **отдельно**
+(без него TOTP-секреты в копии не расшифровать), если не задан `JUDGEFLOW_SECRET_KEY`.
+Восстановление: остановить сервер, положить копию как `DATA_DIR/judgeflow.db` (удалив старые `-wal`/`-shm`),
+вернуть `uploads/` и `secret.key`.
 
 ## Разработка
 
