@@ -791,29 +791,52 @@ async fn matrix(
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let mut conn = state.pool.acquire().await?;
-    load_event(&mut conn, &id).await?;
     let judges = load_judges(&mut conn, &id).await?;
     let layout = domain::Layout::load(&mut conn, &id).await?;
-    let saved: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT s.judge_id, s.team_id, s.criterion_id FROM scores s \
-         JOIN judges j ON j.id = s.judge_id WHERE j.event_id = ? AND s.value_x100 IS NOT NULL",
-    )
-    .bind(&id)
-    .fetch_all(&mut *conn)
-    .await?;
-    let counts = layout.scored_per_cell(&saved);
+    let event = load_event(&mut conn, &id).await?;
+    let pairwise = event.scoring_mode == "pairwise";
+    let mut counts: HashMap<(String, String), i64> = HashMap::new();
+    if pairwise {
+        // No fixed total in pairwise mode: a cell counts the decided comparisons involving the team.
+        let decided: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT judge_id, team_a, team_b FROM comparisons \
+             WHERE event_id = ? AND winner IS NOT NULL",
+        )
+        .bind(&id)
+        .fetch_all(&mut *conn)
+        .await?;
+        for (judge, a, b) in decided {
+            *counts.entry((judge.clone(), a)).or_default() += 1;
+            *counts.entry((judge, b)).or_default() += 1;
+        }
+    } else {
+        let saved: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT s.judge_id, s.team_id, s.criterion_id FROM scores s \
+             JOIN judges j ON j.id = s.judge_id WHERE j.event_id = ? AND s.value_x100 IS NOT NULL",
+        )
+        .bind(&id)
+        .fetch_all(&mut *conn)
+        .await?;
+        for ((judge, team), n) in layout.scored_per_cell(&saved) {
+            counts.insert((judge.to_string(), team.to_string()), n);
+        }
+    }
     let mut cells = Vec::with_capacity(judges.len() * layout.teams.len());
     for judge in &judges {
         for team in &layout.teams {
             let covered = layout.judge_covers(&judge.id, &team.id);
             let (scored, total) = if covered {
-                let total = layout
-                    .criteria
-                    .iter()
-                    .filter(|c| layout.applies(&team.id, c))
-                    .count() as i64;
+                let total = if pairwise {
+                    0
+                } else {
+                    layout
+                        .criteria
+                        .iter()
+                        .filter(|c| layout.applies(&team.id, c))
+                        .count() as i64
+                };
                 let scored = counts
-                    .get(&(judge.id.as_str(), team.id.as_str()))
+                    .get(&(judge.id.clone(), team.id.clone()))
                     .copied()
                     .unwrap_or(0);
                 (scored, total)
@@ -899,7 +922,12 @@ async fn export_csv(
         .into_iter()
         .map(|t| (t.id, t.name))
         .collect();
-    let criteria = domain::load_criteria(&mut conn, &id).await?;
+    // Pairwise events have no scored criteria (stray rubric criteria would only add empty columns).
+    let criteria = if event.scoring_mode == "pairwise" {
+        Vec::new()
+    } else {
+        domain::load_criteria(&mut conn, &id).await?
+    };
     let judges = load_judges(&mut conn, &id).await?;
     let tracks = domain::load_tracks(&mut conn, &id).await?;
 
@@ -908,6 +936,14 @@ async fn export_csv(
         header.push("Трек".to_string());
     }
     header.extend(["Балл", "Листов", "Кворум"].into_iter().map(String::from));
+    let pairwise = event.scoring_mode == "pairwise";
+    if pairwise {
+        header.extend(
+            ["Побед", "Поражений", "Ничьих"]
+                .into_iter()
+                .map(String::from),
+        );
+    }
     header.extend(criteria.iter().map(|c| csv_text_cell(&c.name)));
     header.extend(judges.iter().map(|j| csv_text_cell(&j.name)));
     let mut lines = vec![header.join(";")];
@@ -923,6 +959,9 @@ async fn export_csv(
         cells.push(row.score_x100.map(format_x100).unwrap_or_default());
         cells.push(row.sheets.to_string());
         cells.push(if row.meets_quorum { "да" } else { "нет" }.to_string());
+        if pairwise {
+            cells.extend([row.wins, row.losses, row.ties].map(|n| n.unwrap_or(0).to_string()));
+        }
         // A row only carries the criteria of its own track; other columns stay empty.
         cells.extend(criteria.iter().map(|c| {
             row.criteria

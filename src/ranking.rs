@@ -84,6 +84,13 @@ pub struct Row {
     /// Defaults to `None` so snapshots written before tracks existed still parse.
     #[serde(default)]
     pub track_id: Option<String>,
+    /// Pairwise mode only (SPEC section 13): decided comparisons won, lost and tied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wins: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub losses: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ties: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +280,9 @@ pub fn compute(input: &Input, mode: Mode) -> Ranking {
                     criteria,
                     judges: sheets.judge_scores,
                     track_id: None,
+                    wins: None,
+                    losses: None,
+                    ties: None,
                 },
                 exact,
             }

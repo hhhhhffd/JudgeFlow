@@ -222,6 +222,9 @@ fn make_row(
             })
             .collect(),
         track_id: None,
+        wins: None,
+        losses: None,
+        ties: None,
     }
 }
 

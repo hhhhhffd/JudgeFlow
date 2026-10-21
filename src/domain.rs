@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use sqlx::SqliteConnection;
 
 use crate::error::{AppError, AppResult};
+use crate::pairwise;
 use crate::ranking::{self, Input, Mode, Ranking};
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
@@ -333,7 +334,7 @@ impl Layout {
 
     /// Track groups in ranking order: tracks in order, then teams without a track. Empty groups
     /// are skipped; an event without tracks is a single group.
-    fn groups(&self) -> Vec<(Option<String>, Vec<&Team>)> {
+    pub fn groups(&self) -> Vec<(Option<String>, Vec<&Team>)> {
         let mut groups: Vec<(Option<String>, Vec<&Team>)> = self
             .tracks
             .iter()
@@ -529,6 +530,9 @@ pub async fn compute_ranking(
     event: &Event,
     mode: Mode,
 ) -> AppResult<Ranking> {
+    if event.scoring_mode == "pairwise" {
+        return compute_pairwise_ranking(conn, event, mode).await;
+    }
     let mut rows = Vec::new();
     for (track_id, input) in ranking_inputs(conn, event).await? {
         let group = ranking::compute(&input, mode);
@@ -542,6 +546,85 @@ pub async fn compute_ranking(
         quorum: event.quorum.max(1) as u32,
         rows,
     })
+}
+
+/// Pairwise counterpart of the rubric path (SPEC section 13): one Bradley–Terry ranking per
+/// track group. Only decided comparisons between two teams of the group that the judge covers
+/// are used; wins/losses/ties are merged into the rows.
+async fn compute_pairwise_ranking(
+    conn: &mut SqliteConnection,
+    event: &Event,
+    mode: Mode,
+) -> AppResult<Ranking> {
+    let layout = Layout::load(&mut *conn, &event.id).await?;
+    let judges: Vec<(String, bool, Option<i64>)> = sqlx::query_as(
+        "SELECT id, is_active, submitted_at FROM judges WHERE event_id = ? ORDER BY created_at, rowid",
+    )
+    .bind(&event.id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let comparisons: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT judge_id, team_a, team_b, winner FROM comparisons \
+         WHERE event_id = ? AND winner IS NOT NULL ORDER BY created_at, rowid",
+    )
+    .bind(&event.id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let judge_inputs: Vec<pairwise::JudgeInput> = judges
+        .into_iter()
+        .map(|(id, is_active, submitted_at)| pairwise::JudgeInput {
+            id,
+            is_active,
+            submitted: submitted_at.is_some(),
+        })
+        .collect();
+    let quorum = event.quorum.max(1) as u32;
+
+    let mut rows = Vec::new();
+    for (track_id, teams) in layout.groups() {
+        let team_ids: HashSet<&str> = teams.iter().map(|t| t.id.as_str()).collect();
+        let comparisons = comparisons
+            .iter()
+            .filter(|(judge, a, b, _)| {
+                team_ids.contains(a.as_str())
+                    && team_ids.contains(b.as_str())
+                    && layout.judge_covers(judge, a)
+                    && layout.judge_covers(judge, b)
+            })
+            .map(|(judge, a, b, winner)| pairwise::ComparisonInput {
+                judge_id: judge.clone(),
+                team_a: a.clone(),
+                team_b: b.clone(),
+                winner: match winner.as_str() {
+                    "a" => pairwise::Winner::A,
+                    "b" => pairwise::Winner::B,
+                    _ => pairwise::Winner::Tie,
+                },
+            })
+            .collect();
+        let input = pairwise::Input {
+            teams: teams.iter().map(|t| t.id.clone()).collect(),
+            comparisons,
+            judges: judge_inputs.clone(),
+            quorum,
+        };
+        let group = pairwise::compute(&input, mode);
+        let stats: HashMap<&str, &pairwise::TeamStats> = group
+            .stats
+            .iter()
+            .map(|s| (s.team_id.as_str(), s))
+            .collect();
+        rows.extend(group.ranking.rows.into_iter().map(|mut row| {
+            row.track_id = track_id.clone();
+            if let Some(stat) = stats.get(row.team_id.as_str()) {
+                row.wins = Some(stat.wins);
+                row.losses = Some(stat.losses);
+                row.ties = Some(stat.ties);
+            }
+            row
+        }));
+    }
+    Ok(Ranking { mode, quorum, rows })
 }
 
 /// The track the stage shows: the selected one, or the first group in ranking order (`None`
