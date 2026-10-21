@@ -1,0 +1,149 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@fontsource-variable/onest';
+@import '@fontsource-variable/jetbrains-mono';
+
+/*
+ * Visual language: "ink and signal". Cool paper surfaces, deep navy ink for
+ * primary actions, a single amber "signal" reserved for rank/score highlights.
+ * Numbers use tabular mono figures (scores are the product's subject).
+ * Fonts are bundled (no CDN): the app must work on a LAN without internet.
+ */
+:root {
+  --background: oklch(0.975 0.004 255);
+  --foreground: oklch(0.2 0.02 258);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.34 0.075 255);
+  --primary-foreground: oklch(0.98 0.005 255);
+  --secondary: oklch(0.945 0.008 255);
+  --secondary-foreground: oklch(0.28 0.04 255);
+  --muted: oklch(0.955 0.006 255);
+  --muted-foreground: oklch(0.5 0.02 257);
+  --accent: oklch(0.93 0.02 255);
+  --accent-foreground: var(--secondary-foreground);
+  --destructive: oklch(0.55 0.2 27);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.9 0.008 255);
+  --input: oklch(0.86 0.01 255);
+  --ring: oklch(0.55 0.12 255);
+  --signal: oklch(0.8 0.15 80);
+  --signal-foreground: oklch(0.28 0.06 70);
+  --success: oklch(0.52 0.12 155);
+  --success-soft: oklch(0.95 0.04 155);
+  --warning: oklch(0.5 0.11 70);
+  --warning-soft: oklch(0.96 0.06 90);
+  --info: oklch(0.45 0.12 255);
+  --info-soft: oklch(0.94 0.03 255);
+  --radius: 0.625rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.18 0.015 258);
+    --foreground: oklch(0.95 0.005 255);
+    --card: oklch(0.22 0.018 258);
+    --popover: oklch(0.24 0.018 258);
+    --primary: oklch(0.82 0.08 250);
+    --primary-foreground: oklch(0.2 0.04 255);
+    --secondary: oklch(0.27 0.02 258);
+    --secondary-foreground: oklch(0.93 0.01 255);
+    --muted: oklch(0.25 0.017 258);
+    --muted-foreground: oklch(0.7 0.02 257);
+    --accent: oklch(0.3 0.03 258);
+    --destructive: oklch(0.68 0.18 25);
+    --destructive-foreground: oklch(0.16 0.02 25);
+    --border: oklch(0.3 0.018 258);
+    --input: oklch(0.36 0.02 258);
+    --ring: oklch(0.7 0.1 250);
+    --signal: oklch(0.82 0.14 82);
+    --success: oklch(0.76 0.14 155);
+    --success-soft: oklch(0.28 0.05 155);
+    --warning: oklch(0.82 0.13 85);
+    --warning-soft: oklch(0.3 0.05 85);
+    --info: oklch(0.78 0.1 250);
+    --info-soft: oklch(0.29 0.04 255);
+  }
+}
+
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+@theme inline {
+  --font-sans: 'Onest Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+}
+
+@layer utilities {
+  /* Scores and counters: aligned digits. */
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+  /* Signature motif: a ruler-like tick strip, echoing a score scale. */
+  .ticks {
+    background-image: repeating-linear-gradient(
+      90deg,
+      color-mix(in oklch, var(--foreground) 22%, transparent) 0 1px,
+      transparent 1px 8px
+    );
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
