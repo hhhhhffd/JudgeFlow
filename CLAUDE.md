@@ -19,15 +19,17 @@ src/
   cli.rs, server.rs, config.rs   CLI (serve, admin ...), startup/shutdown, env config
   db.rs                          pool + migrations; begin_write() = BEGIN IMMEDIATE (use for read-then-write)
   auth.rs                        extractors: AdminSession, OwnerSession, JudgeAuth (Bearer)
-  domain.rs                      shared loaders/validators, the single ranking-input loader
-  ranking.rs                     pure ranking engine (exact rationals), unit-tested
+  domain.rs                      shared loaders/validators, Layout (judge coverage: tracks,
+                                 assignments, conflicts), the single ranking path (per track)
+  ranking.rs                     pure rubric ranking engine (exact rationals, centering, stage slicing)
+  pairwise.rs                    pure Bradley–Terry ranking + deterministic pair selection
   sse.rs                         per-event broadcast hub (invalidation hints only)
   routes/                        one module per area; paths without /api prefix
 migrations/                      SQLite schema (sqlx::migrate!)
 tests/                           API integration tests (tests/common for helpers)
 web/src/
   api/                           typed client, endpoints, fetch-based SSE
-  features/control-room|judge|live
+  features/control-room|judge|live|stage
   i18n/                          all UI strings (ru.ts, control-room.ts, judge.ts)
 web/sw/sw.js                     service worker (app shell only, never /api)
 web/e2e/                         Playwright E2E against the real binary
@@ -38,7 +40,9 @@ web/e2e/                         Playwright E2E against the real binary
 - SQL: literal queries with binds only (`sqlx::query`), no compile-time macros, no string-built SQL.
 - Errors: `AppError` → `{error, message, details?}`; user-facing messages in Russian.
 - Every admin mutation on an event writes `audit_log` and notifies SSE with the right `ChangeKind`.
-- Ranking logic lives only in `ranking.rs`; load input via `domain.rs`. Missing score ≠ 0.
+- Ranking logic lives only in `ranking.rs`/`pairwise.rs`; every consumer (results, CSV, public, stage,
+  snapshots) goes through `domain::compute_ranking`. Missing score ≠ 0.
+- Applied migrations are immutable (sqlx checksums) — add a new numbered file instead.
 - UI is Russian; code, comments and API are English.
 
 ## Commands
