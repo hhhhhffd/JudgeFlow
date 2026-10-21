@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Criterion, ScoreItem, ScoreResult, Team } from '@/api/types'
+import type { Criterion, JudgeSession, ScoreItem, ScoreResult, Team } from '@/api/types'
 import {
   adoptedWins,
   applyEdit,
@@ -8,11 +8,14 @@ import {
   pickOrphanKeys,
   applyNote,
   applyResults,
+  buildSheet,
   cellKey,
   diffRows,
   isValidValue,
   itemNote,
   itemProgress,
+  overallProgress,
+  pruneOutsideSheet,
   mergeServer,
   missingCells,
   pendingCount,
@@ -22,6 +25,7 @@ import {
   scaleOf,
   stepValue,
   syncIndicator,
+  type LocalRow,
   type Rows,
 } from './scoring'
 
@@ -268,5 +272,45 @@ describe('read-only and indicator', () => {
     const err = syncIndicator({ ...base, rejected: 2, syncing: true })
     expect(err.kind).toBe('error')
     expect(err.text).toContain('Ошибка')
+  })
+})
+
+describe('tracks', () => {
+  const ts = [
+    { id: 't1', track_id: 'a' },
+    { id: 't2', track_id: 'b' },
+  ] as Team[]
+  const cs = [
+    { id: 'c1', track_id: null },
+    { id: 'c2', track_id: 'a' },
+  ] as Criterion[]
+
+  it('limits progress to criteria that apply to the team', () => {
+    expect(itemProgress('team', 't2', ts, cs, {})).toMatchObject({ total: 1 })
+    expect(itemProgress('criterion', 'c2', ts, cs, {})).toMatchObject({ total: 1 })
+    expect(overallProgress(ts, cs, {})).toEqual({ done: 0, total: 3 })
+    expect(missingCells(ts, cs, {})).toHaveLength(3)
+  })
+
+  it('prunes rows outside the sheet but keeps unsent edits', () => {
+    const row = (team_id: string, criterion_id: string, patch: Partial<LocalRow> = {}): LocalRow => ({ team_id, criterion_id, value_x100: 100, note: '', edited_at: 1, dirty: false, ...patch })
+    const rows: Rows = {
+      't1:c2': row('t1', 'c2'),
+      't2:c2': row('t2', 'c2'),
+      't9:c1': row('t9', 'c1', { dirty: true }),
+      'x:c1': row('x', 'c1', { dirty: true, error: 'rejected' }),
+    }
+    expect(Object.keys(pruneOutsideSheet(rows, ts, cs)).sort()).toEqual(['t1:c2', 't9:c1'])
+  })
+
+  it('exports every local row including parked ones', () => {
+    const session = { event: { id: 'e' }, judge: { id: 'j', name: 'J' } } as JudgeSession
+    const rows: Rows = {
+      a: { team_id: 't1', criterion_id: 'c1', value_x100: 500, note: 'n', edited_at: 2, dirty: true, error: 'x' },
+      b: { team_id: 't1', criterion_id: 'c2', value_x100: 300, note: '', edited_at: 1, dirty: false },
+    }
+    const sheet = buildSheet(session, 'tok', rows, 9)
+    expect(sheet).toMatchObject({ format: 'judgeflow-sheet/1', event_id: 'e', judge_id: 'j', token: 'tok', exported_at: 9 })
+    expect(sheet.items.map((i) => i.criterion_id)).toEqual(['c2', 'c1'])
   })
 })

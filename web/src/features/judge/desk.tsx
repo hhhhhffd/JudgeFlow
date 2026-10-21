@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { ChevronLeft, ChevronRight, ListChecks, Lock, Send, X } from 'lucide-react'
 import { toast } from 'sonner'
-import type { Criterion, JudgeSession, Team } from '@/api/types'
+import type { Criterion, JudgeSession } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -9,8 +9,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { Backdrop } from '@/features/live/backdrop'
 import { judgeText } from '@/i18n/judge'
 import { formatX100 } from '@/lib/format'
+import { criterionApplies, groupByTrack } from '@/lib/tracks'
 import { cn } from '@/lib/utils'
 import { AlertModal } from './alert-modal'
+import { BackupAlert, BackupMenu } from './backup'
 import type { DeskController } from './controller'
 import { HotkeysHelp, useHotkeys } from './hotkeys'
 import { Queue } from './queue'
@@ -19,6 +21,7 @@ import {
   cellKey,
   errorRows,
   itemKeys,
+  itemLines,
   itemNote,
   overallProgress,
   pendingCount,
@@ -30,7 +33,7 @@ import { getSeenAlertVersion, setSeenAlertVersion } from './storage'
 import { SubmitDialog } from './submit-dialog'
 import { SyncBadge } from './sync-badge'
 
-type Item = { id: string; name: string; description: string | null }
+type Item = { id: string; name: string; description: string | null; track_id: string | null }
 
 const label = (enabled: boolean, custom: string | null, fallback: string) => (enabled && custom?.trim() ? custom.trim() : fallback)
 
@@ -42,8 +45,12 @@ export function Desk({ controller, session }: { controller: DeskController; sess
 
   const teamsLabel = label(event.teams_label_enabled, event.teams_label, judgeText.defaultTeams)
   const criteriaLabel = label(event.criteria_label_enabled, event.criteria_label, judgeText.defaultCriteria)
-  const items: Item[] = mode === 'team' ? teams : criteria
-  const lines: Item[] = mode === 'team' ? criteria : teams
+  const tracks = useMemo(() => session.tracks ?? [], [session.tracks])
+  // The queue is shown grouped by track, so navigation follows the same order.
+  const items: Item[] = useMemo(() => {
+    const raw: Item[] = mode === 'team' ? teams : criteria.filter((c) => teams.some((t) => criterionApplies(c, t)))
+    return groupByTrack(raw, tracks).flatMap((g) => g.rows)
+  }, [mode, teams, criteria, tracks])
   const itemsLabel = mode === 'team' ? teamsLabel : criteriaLabel
   const linesLabel = mode === 'team' ? criteriaLabel : teamsLabel
 
@@ -55,6 +62,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
 
   const itemIndex = Math.max(0, items.findIndex((i) => i.id === itemId))
   const item = items[itemIndex]
+  const lines: Item[] = useMemo(() => (item ? itemLines(mode, item.id, teams, criteria) : []), [mode, item, teams, criteria])
   const lineIndex = Math.max(0, lines.findIndex((l) => l.id === lineId))
   const line = lines[lineIndex]
 
@@ -127,6 +135,8 @@ export function Desk({ controller, session }: { controller: DeskController; sess
       mode={mode}
       heading={itemsLabel}
       items={items}
+      tracks={tracks}
+      allTracksLabel={mode === 'team' ? judgeText.queue.noTrack : judgeText.queue.allTracks}
       teams={teams}
       criteria={criteria}
       rows={rows}
@@ -151,6 +161,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
             <p className="truncate text-xs text-muted-foreground">{session.judge.name}</p>
           </div>
           <SyncBadge kind={indicator.kind} text={indicator.text} pending={pending} fromCache={state.fromCache} onRetry={() => controller.retryRejected()} />
+          <BackupMenu controller={controller} />
           <HotkeysHelp />
           {session.judge.submitted_at !== null ? (
             <Badge variant="success" className="py-1">
@@ -166,6 +177,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
           )}
         </header>
 
+        <BackupAlert controller={controller} errorKind={indicator.kind === 'error'} />
         {state.storageError && (
           <p role="alert" className="border-b border-warning/30 bg-warning-soft px-4 py-2 text-sm text-warning">
             {state.storageError}
@@ -279,7 +291,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
                 <p className="text-xs text-muted-foreground">{hasScoreInItem ? judgeText.notes.autosave : judgeText.notes.needScore}</p>
               </div>
             )}
-            <Help mode={mode} item={item} teams={teams} criteria={criteria} activeLineId={line?.id} />
+            <Help mode={mode} item={item} entries={lines} activeLineId={line?.id} />
           </aside>
         </div>
 
@@ -328,18 +340,15 @@ export function Desk({ controller, session }: { controller: DeskController; sess
 function Help({
   mode,
   item,
-  teams,
-  criteria,
+  entries,
   activeLineId,
 }: {
   mode: 'team' | 'criterion'
   item: Item | undefined
-  teams: Team[]
-  criteria: Criterion[]
+  entries: Item[]
   activeLineId: string | undefined
 }) {
-  // Team mode: what the item is + what each criterion means. Criterion mode: who the teams are.
-  const entries = mode === 'team' ? criteria : teams
+  // Team mode: what the item is + what each applicable criterion means. Criterion mode: who the teams are.
   const described = entries.filter((e) => e.description)
   return (
     <div className="flex flex-col gap-3">

@@ -3,7 +3,7 @@
 // work runs on one serial queue, so a session snapshot can never race a confirmed send.
 import { toast } from 'sonner'
 import { ApiError, judgeApi, openStream } from '@/api'
-import type { JudgeSession, SubmitMissingDetails } from '@/api/types'
+import type { JudgeSession, SheetFile, SubmitMissingDetails } from '@/api/types'
 import { judgeText } from '@/i18n/judge'
 import { errorText } from '@/lib/errors'
 import {
@@ -11,12 +11,14 @@ import {
   applyNote,
   adoptedWins,
   applyResults,
+  buildSheet,
   diffRows,
   itemKeys,
   itemNote,
   mergeServer,
   pendingCount,
   pickBatch,
+  pruneOutsideSheet,
   readOnlyReason,
   type LocalRow,
   type Rows,
@@ -221,7 +223,7 @@ export class DeskController {
         const session = await judgeApi.session(this.token)
         await this.adoptOrphans(session)
         const prev = this.state.rows
-        const rows = mergeServer(prev, session.scores)
+        const rows = pruneOutsideSheet(mergeServer(prev, session.scores), session.teams, session.criteria)
         this.set({ session, rows, phase: 'ready', fromCache: false, failure: null })
         this.persist(prev, rows, session)
       } catch (e) {
@@ -351,6 +353,14 @@ export class DeskController {
       if (e instanceof ApiError && e.status === 401) this.set({ phase: 'revoked' })
       else console.warn('judge: heartbeat failed', e)
     }
+  }
+
+  // ---- emergency backup ----
+
+  /** The whole local sheet including the judge's token, or null before a session exists. */
+  exportSheet(): SheetFile | null {
+    const session = this.state.session
+    return session ? buildSheet(session, this.token, this.state.rows, Date.now()) : null
   }
 
   // ---- sheet submission ----

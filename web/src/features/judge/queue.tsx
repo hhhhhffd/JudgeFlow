@@ -4,12 +4,16 @@ import { Input } from '@/components/ui/input'
 import { judgeText } from '@/i18n/judge'
 import { cn } from '@/lib/utils'
 import { itemProgress, type Rows } from './scoring'
-import type { Criterion, ScoringMode, Team } from '@/api/types'
+import type { Criterion, ScoringMode, Team, Track } from '@/api/types'
+import { groupByTrack } from '@/lib/tracks'
 
 interface Props {
   mode: ScoringMode
   heading: string
-  items: { id: string; name: string }[]
+  items: { id: string; name: string; track_id: string | null }[]
+  tracks: Track[]
+  /** Heading of items that belong to no track. */
+  allTracksLabel: string
   teams: Team[]
   criteria: Criterion[]
   rows: Rows
@@ -18,7 +22,7 @@ interface Props {
   onSelect: (id: string) => void
 }
 
-export function Queue({ mode, heading, items, teams, criteria, rows, currentId, progress, onSelect }: Props) {
+export function Queue({ mode, heading, items, tracks, allTracksLabel, teams, criteria, rows, currentId, progress, onSelect }: Props) {
   const [query, setQuery] = useState('')
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -57,40 +61,49 @@ export function Queue({ mode, heading, items, teams, criteria, rows, currentId, 
       </div>
       <ul className="-mx-1 min-h-0 flex-1 space-y-1 overflow-y-auto px-1 pb-2">
         {shown.length === 0 && <li className="px-2 py-6 text-center text-sm text-muted-foreground">{judgeText.queue.nothingFound}</li>}
-        {shown.map((item) => {
-          const p = itemProgress(mode, item.id, teams, criteria, rows)
-          const complete = p.total > 0 && p.done === p.total
-          const current = item.id === currentId
-          return (
-            <li key={item.id}>
-              <button
-                type="button"
-                aria-current={current ? 'true' : undefined}
-                onClick={() => onSelect(item.id)}
-                className={cn(
-                  'flex min-h-12 w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors duration-150 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                  current ? 'border-primary/40 bg-accent' : 'border-transparent hover:bg-accent/60',
-                )}
-              >
-                <span
-                  className={cn(
-                    'flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-                    complete ? 'bg-success-soft text-success' : 'bg-secondary text-secondary-foreground',
-                  )}
-                >
-                  {complete ? <Check className="size-3.5" aria-label={judgeText.queue.itemDone} /> : <span className="num">{p.done}</span>}
-                </span>
-                <span className="min-w-0 flex-1 truncate font-medium">{item.name}</span>
-                {p.error ? (
-                  <AlertTriangle className="size-4 shrink-0 text-destructive" aria-label={judgeText.queue.itemError} />
-                ) : p.pending ? (
-                  <CloudUpload className="size-4 shrink-0 text-warning" aria-label={judgeText.queue.itemPending} />
-                ) : null}
-                <span className="num shrink-0 text-xs text-muted-foreground">{judgeText.queue.itemProgress(p.done, p.total)}</span>
-              </button>
-            </li>
-          )
-        })}
+        {groupByTrack(shown, tracks).map((g) => (
+          <li key={g.track?.id ?? 'none'} className="space-y-1">
+            {tracks.length > 0 && (
+              <h3 className="px-2 pt-2 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{g.track?.name ?? allTracksLabel}</h3>
+            )}
+            <ul className="space-y-1">
+              {g.rows.map((item) => {
+                const p = itemProgress(mode, item.id, teams, criteria, rows)
+                const complete = p.total > 0 && p.done === p.total
+                const current = item.id === currentId
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      aria-current={current ? 'true' : undefined}
+                      onClick={() => onSelect(item.id)}
+                      className={cn(
+                        'flex min-h-12 w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors duration-150 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                        current ? 'border-primary/40 bg-accent' : 'border-transparent hover:bg-accent/60',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                          complete ? 'bg-success-soft text-success' : 'bg-secondary text-secondary-foreground',
+                        )}
+                      >
+                        {complete ? <Check className="size-3.5" aria-label={judgeText.queue.itemDone} /> : <span className="num">{p.done}</span>}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{item.name}</span>
+                      {p.error ? (
+                        <AlertTriangle className="size-4 shrink-0 text-destructive" aria-label={judgeText.queue.itemError} />
+                      ) : p.pending ? (
+                        <CloudUpload className="size-4 shrink-0 text-warning" aria-label={judgeText.queue.itemPending} />
+                      ) : null}
+                      <span className="num shrink-0 text-xs text-muted-foreground">{judgeText.queue.itemProgress(p.done, p.total)}</span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </li>
+        ))}
       </ul>
     </div>
   )

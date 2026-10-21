@@ -7,9 +7,12 @@ import type {
   ScoreItem,
   ScoreResult,
   ScoringMode,
+  SheetFile,
   Team,
 } from '@/api/types'
+import { SHEET_FORMAT } from '@/api/types'
 import { judgeText } from '@/i18n/judge'
+import { criterionApplies } from '@/lib/tracks'
 
 export interface LocalRow {
   team_id: string
@@ -101,14 +104,30 @@ export function mergeServer(rows: Rows, server: JudgeScoreRecord[]): Rows {
   return next
 }
 
+/**
+ * Drops rows of cells outside the judge's current sheet (team reassigned, track changed).
+ * The server rejects them with `not_assigned`, and the judge cannot see them to clear them.
+ * An unsent edit survives until the server has actually rejected it.
+ */
+export function pruneOutsideSheet(rows: Rows, teams: Team[], criteria: Criterion[]): Rows {
+  const allowed = new Set<string>()
+  for (const t of teams) for (const c of criteria) if (criterionApplies(c, t)) allowed.add(cellKey(t.id, c.id))
+  const next: Rows = {}
+  for (const [k, row] of Object.entries(rows)) if (allowed.has(k) || (row.dirty && !row.error)) next[k] = row
+  return Object.keys(next).length === Object.keys(rows).length ? rows : next
+}
+
 export const BATCH_LIMIT = 100
 
 /** Oldest-first batch of rows that are dirty and not parked after a rejection. */
 export function pickBatch(rows: Rows, limit = BATCH_LIMIT): ScoreItem[] {
-  return Object.values(rows)
-    .filter((r) => r.dirty && !r.error)
+  return toItems(Object.values(rows).filter((r) => r.dirty && !r.error)).slice(0, limit)
+}
+
+const toItems = (rows: LocalRow[]): ScoreItem[] =>
+  rows
+    .slice()
     .sort((a, b) => a.edited_at - b.edited_at)
-    .slice(0, limit)
     .map((r) => ({
       team_id: r.team_id,
       criterion_id: r.criterion_id,
@@ -116,6 +135,21 @@ export function pickBatch(rows: Rows, limit = BATCH_LIMIT): ScoreItem[] {
       note: r.value_x100 === null ? null : r.note || null,
       edited_at: r.edited_at,
     }))
+
+/**
+ * Emergency backup of the whole local sheet (SPEC §12): every row, synced or not, parked or not.
+ * The organizer imports it with the usual last-writer-wins rules, so extra rows are harmless.
+ */
+export function buildSheet(session: JudgeSession, token: string, rows: Rows, now: number): SheetFile {
+  return {
+    format: SHEET_FORMAT,
+    event_id: session.event.id,
+    judge_id: session.judge.id,
+    judge_name: session.judge.name,
+    token,
+    exported_at: now,
+    items: toItems(Object.values(rows)),
+  }
 }
 
 export function errorMessage(code: string | undefined): string {
@@ -127,6 +161,8 @@ export function errorMessage(code: string | undefined): string {
       return e.invalid_state
     case 'validation':
       return e.validation
+    case 'not_assigned':
+      return e.not_assigned
     default:
       return e.fallback
   }
@@ -247,6 +283,7 @@ export function missingCells(teams: Team[], criteria: Criterion[], rows: Rows) {
   const out: { team_id: string; criterion_id: string }[] = []
   for (const t of teams) {
     for (const c of criteria) {
+      if (!criterionApplies(c, t)) continue
       if (rows[cellKey(t.id, c.id)]?.value_x100 == null) out.push({ team_id: t.id, criterion_id: c.id })
     }
   }
@@ -282,12 +319,22 @@ export function itemProgress(
   return { done, total: keys.length, pending, error }
 }
 
+/** Criteria that apply to a team / teams a criterion applies to: the lines of one queue item. */
+export function itemLines(mode: ScoringMode, itemId: string, teams: Team[], criteria: Criterion[]): (Team | Criterion)[] {
+  if (mode === 'team') {
+    const team = teams.find((t) => t.id === itemId)
+    return team ? criteria.filter((c) => criterionApplies(c, team)) : []
+  }
+  const criterion = criteria.find((c) => c.id === itemId)
+  return criterion ? teams.filter((t) => criterionApplies(criterion, t)) : []
+}
+
 export function itemKeys(mode: ScoringMode, itemId: string, teams: Team[], criteria: Criterion[]): string[] {
-  return mode === 'team' ? criteria.map((c) => cellKey(itemId, c.id)) : teams.map((t) => cellKey(t.id, itemId))
+  return itemLines(mode, itemId, teams, criteria).map((l) => (mode === 'team' ? cellKey(itemId, l.id) : cellKey(l.id, itemId)))
 }
 
 export function overallProgress(teams: Team[], criteria: Criterion[], rows: Rows) {
-  const total = teams.length * criteria.length
+  const total = teams.reduce((n, t) => n + criteria.filter((c) => criterionApplies(c, t)).length, 0)
   return { done: total - missingCells(teams, criteria, rows).length, total }
 }
 
