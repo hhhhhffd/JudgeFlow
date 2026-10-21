@@ -73,6 +73,14 @@ describe('parseTeamsPaste with tracks', () => {
   })
 })
 
+describe('parseTeamsPaste extra columns', () => {
+  const tracks = [{ id: 'w', name: 'Веб' }]
+  it('joins extra columns into the description without unknown_track warnings', () => {
+    expect(parseTeamsPaste('A\tdesc\tx\ty', tracks)).toEqual([{ name: 'A', description: 'desc x y' }])
+    expect(parseTeamsPaste('A\tdesc\tВеб\textra', tracks)).toEqual([{ name: 'A', description: 'desc extra', track_id: 'w' }])
+  })
+})
+
 describe('assignments', () => {
   const team = (id: string, track_id: string | null): Team => ({ id, name: id, description: null, track_id, sort_order: 0 })
   const crit = (id: string, track_id: string | null): Criterion => ({ id, name: id, description: null, max_x100: 1000, step_x100: 100, weight: 1, track_id, sort_order: 0 })

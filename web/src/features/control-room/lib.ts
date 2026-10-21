@@ -8,23 +8,30 @@ export type PasteRow = TeamInput & {
 
 /**
  * Paste import: one team per line, `name<TAB>description<TAB>track`; the last two are optional.
- * Track names are matched case-insensitively. Blank lines are skipped.
+ * Track names are matched case-insensitively. Blank lines are skipped. The third column is a track
+ * only when it names a known track: with exactly three columns an unmatched value is flagged, with
+ * more columns (a spreadsheet with extra data) the remaining columns are joined into the description.
  */
 export function parseTeamsPaste(text: string, tracks: Track[] = []): PasteRow[] {
   const byName = new Map(tracks.map((t) => [t.name.trim().toLowerCase(), t.id]))
   const out: PasteRow[] = []
   for (const line of text.split(/\r\n|\r|\n/)) {
-    const [rawName = '', rawDescription = '', rawTrack = ''] = line.split('\t')
+    const [rawName = '', ...rest] = line.split('\t')
     const name = rawName.trim()
     if (!name) continue
-    const description = rawDescription.trim()
-    const trackName = rawTrack.trim()
-    const row: PasteRow = description ? { name, description } : { name }
-    if (trackName) {
-      const id = byName.get(trackName.toLowerCase())
-      if (id) row.track_id = id
-      else row.unknown_track = trackName
+    const row: PasteRow = { name }
+    const trackName = (rest[1] ?? '').trim()
+    const trackId = byName.get(trackName.toLowerCase())
+    let descriptionCols = rest
+    if (trackId) {
+      row.track_id = trackId
+      descriptionCols = [rest[0] ?? '', ...rest.slice(2)]
+    } else if (rest.length === 2 && trackName) {
+      row.unknown_track = trackName
+      descriptionCols = [rest[0] ?? '']
     }
+    const description = descriptionCols.map((c) => c.trim()).filter(Boolean).join(' ')
+    if (description) row.description = description
     out.push(row)
   }
   return out
