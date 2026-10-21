@@ -845,3 +845,59 @@ async fn rubric_round_hands_over_to_a_pairwise_round() {
     assert_eq!((rows[0].2.clone(), rows[0].3.clone()), (json!(1), json!(0)));
     assert_eq!((rows[1].2.clone(), rows[1].3.clone()), (json!(0), json!(1)));
 }
+
+#[tokio::test]
+async fn rubric_score_writes_are_rejected_in_pairwise_events() {
+    let fx = pairwise(1, &[], true).await;
+    let session = fx.judge(0, Method::GET, "/judge/session", None).await;
+    assert_eq!(session.body["criteria"], json!([]));
+    let put = fx
+        .put_scores(
+            0,
+            json!([{ "team_id": fx.team_ids[0], "criterion_id": fx.criterion_ids[0],
+                    "value_x100": 500, "edited_at": now_ms() }]),
+        )
+        .await;
+    assert_eq!(put.status, StatusCode::OK, "{:?}", put.body);
+    assert_eq!(put.body["results"][0]["status"], "rejected");
+    assert_eq!(put.body["results"][0]["error"], "invalid_state");
+}
+
+async fn assign_judge(fx: &Fixture, teams: &[usize]) {
+    let pairs: Vec<Value> = teams
+        .iter()
+        .map(|t| json!({ "judge_id": fx.judges[0].0, "team_id": fx.team_ids[*t] }))
+        .collect();
+    let resp = fx
+        .admin(
+            Method::PUT,
+            &format!("/events/{}/assignments", fx.event_id),
+            Some(json!({ "pairs": pairs })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+}
+
+#[tokio::test]
+async fn reserve_drops_open_pairs_that_are_no_longer_covered() {
+    let fx = pairwise(1, &["Вега"], true).await;
+    assert_eq!(comparisons(&reserve(&fx, 0, 3).await).len(), 3);
+    assign_judge(&fx, &[0, 1]).await;
+    let open = comparisons(&reserve(&fx, 0, 3).await);
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert_eq!(unordered(&open[0]), {
+        let mut p = [fx.team_ids[0].clone(), fx.team_ids[1].clone()];
+        p.sort();
+        (p[0].clone(), p[1].clone())
+    });
+}
+
+#[tokio::test]
+async fn submit_drops_open_pairs_that_are_no_longer_covered() {
+    let fx = pairwise(1, &["Вега"], true).await;
+    assert_eq!(comparisons(&reserve(&fx, 0, 3).await).len(), 3);
+    // Only one team left: no pair is valid any more, so nothing blocks the submit.
+    assign_judge(&fx, &[0]).await;
+    let resp = fx.judge(0, Method::POST, "/judge/submit", None).await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+}

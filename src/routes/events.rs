@@ -791,7 +791,7 @@ async fn matrix(
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let mut conn = state.pool.acquire().await?;
-    let judges = load_judges(&mut conn, &id).await?;
+    let mut judges = domain::load_judges_unscored(&mut conn, &id).await?;
     let layout = domain::Layout::load(&mut conn, &id).await?;
     let event = load_event(&mut conn, &id).await?;
     let pairwise = event.scoring_mode == "pairwise";
@@ -817,8 +817,13 @@ async fn matrix(
         .bind(&id)
         .fetch_all(&mut *conn)
         .await?;
+        let mut per_judge: HashMap<&str, i64> = HashMap::new();
         for ((judge, team), n) in layout.scored_per_cell(&saved) {
             counts.insert((judge.to_string(), team.to_string()), n);
+            *per_judge.entry(judge).or_default() += n;
+        }
+        for judge in &mut judges {
+            judge.scored_count = per_judge.get(judge.id.as_str()).copied().unwrap_or(0);
         }
     }
     let mut cells = Vec::with_capacity(judges.len() * layout.teams.len());
@@ -884,7 +889,9 @@ async fn results(
 
 /// Formats hundredths as a decimal with a comma (what a Russian-locale spreadsheet expects).
 fn format_x100(value: i64) -> String {
-    format!("{},{:02}", value / 100, value % 100)
+    let sign = if value < 0 { "-" } else { "" };
+    let abs = value.unsigned_abs();
+    format!("{sign}{},{:02}", abs / 100, abs % 100)
 }
 
 /// Quotes a CSV cell; text starting with a formula character is neutralized with a leading `'`.
@@ -1030,4 +1037,18 @@ async fn stream(
     load_event(&mut conn, &id).await?;
     drop(conn);
     Ok(state.sse.stream(&id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_x100;
+
+    #[test]
+    fn format_x100_handles_negatives() {
+        assert_eq!(format_x100(7550), "75,50");
+        assert_eq!(format_x100(5), "0,05");
+        assert_eq!(format_x100(-3333), "-33,33");
+        assert_eq!(format_x100(-50), "-0,50");
+        assert_eq!(format_x100(0), "0,00");
+    }
 }

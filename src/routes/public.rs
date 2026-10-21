@@ -13,6 +13,7 @@ use crate::domain::{self, Event, load_criteria, load_event};
 use crate::error::{AppError, AppResult};
 use crate::ranking::{Mode, stage_slice};
 use crate::routes::events::upload_path;
+use crate::sse::ChangeKind;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -165,6 +166,15 @@ async fn public_stage(
     })))
 }
 
+/// Hints that can change what a public page shows; judge presence and alerts cannot.
+const PUBLIC_KINDS: &[ChangeKind] = &[
+    ChangeKind::Scores,
+    ChangeKind::Status,
+    ChangeKind::Event,
+    ChangeKind::Composition,
+    ChangeKind::Stage,
+];
+
 async fn stream(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -172,7 +182,7 @@ async fn stream(
     let mut conn = state.pool.acquire().await?;
     load_public(&mut conn, &id).await?;
     drop(conn);
-    Ok(state.sse.stream(&id))
+    Ok(state.sse.stream_filtered(&id, PUBLIC_KINDS))
 }
 
 async fn background(

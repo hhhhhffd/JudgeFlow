@@ -90,10 +90,32 @@ impl SseHub {
         self.stream_until(event_id, std::future::pending())
     }
 
+    /// Like [`stream`](Self::stream), but only delivers hints of the `allowed` kinds (public
+    /// viewers do not need judge presence or alerts).
+    pub fn stream_filtered(
+        &self,
+        event_id: &str,
+        allowed: &'static [ChangeKind],
+    ) -> Sse<impl Stream<Item = Result<Event, Infallible>> + use<>> {
+        self.stream_inner(event_id, allowed, std::future::pending())
+    }
+
     /// Like [`stream`](Self::stream), but also ends the response once `stop` completes.
     pub fn stream_until<F>(
         &self,
         event_id: &str,
+        stop: F,
+    ) -> Sse<impl Stream<Item = Result<Event, Infallible>> + use<F>>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.stream_inner(event_id, &ALL_KINDS, stop)
+    }
+
+    fn stream_inner<F>(
+        &self,
+        event_id: &str,
+        allowed: &'static [ChangeKind],
         stop: F,
     ) -> Sse<impl Stream<Item = Result<Event, Infallible>> + use<F>>
     where
@@ -110,6 +132,7 @@ impl SseHub {
                 };
                 futures::stream::iter(kinds)
             })
+            .filter(move |kind| std::future::ready(allowed.contains(kind)))
             .map(|kind| {
                 let data = serde_json::json!({ "kind": kind }).to_string();
                 Ok(Event::default().event("change").data(data))
@@ -121,5 +144,35 @@ impl SseHub {
                 }
             });
         Sse::new(stream).keep_alive(KeepAlive::new().interval(KEEP_ALIVE))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn filtered_stream_skips_kinds_that_are_not_allowed() {
+        let hub = SseHub::default();
+        let response = hub
+            .stream_filtered("e", &[ChangeKind::Scores])
+            .into_response();
+        hub.notify("e", ChangeKind::Presence);
+        hub.notify("e", ChangeKind::Alert);
+        hub.notify("e", ChangeKind::Scores);
+        let mut body = response.into_body().into_data_stream();
+        let chunk = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .expect("an event arrives")
+            .expect("stream is open")
+            .expect("chunk");
+        let text = String::from_utf8(chunk.to_vec()).unwrap();
+        assert!(text.contains("\"scores\""), "{text}");
+        assert!(
+            !text.contains("presence") && !text.contains("alert"),
+            "{text}"
+        );
     }
 }

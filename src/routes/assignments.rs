@@ -95,7 +95,13 @@ async fn replace_assignments(
     conn: &mut SqliteConnection,
     event_id: &str,
     pairs: &[(String, String)],
+    enabled: bool,
 ) -> AppResult<()> {
+    sqlx::query("UPDATE events SET assignments_enabled = ? WHERE id = ?")
+        .bind(enabled)
+        .bind(event_id)
+        .execute(&mut *conn)
+        .await?;
     sqlx::query(
         "DELETE FROM assignments WHERE judge_id IN (SELECT id FROM judges WHERE event_id = ?)",
     )
@@ -127,7 +133,8 @@ async fn set_assignments(
     let mut tx = begin_write(&state.pool).await?;
     load_editable(&mut tx, &event_id).await?;
     let pairs = validate_pairs(&mut tx, &event_id, &req.pairs).await?;
-    replace_assignments(&mut tx, &event_id, &pairs).await?;
+    // An empty list is the explicit reset to "every judge scores every team".
+    replace_assignments(&mut tx, &event_id, &pairs, !pairs.is_empty()).await?;
     audit::record(
         &mut *tx,
         Some(&event_id),
@@ -181,6 +188,13 @@ fn plan_assignments(
     (pairs, short)
 }
 
+fn short_details(short: &[(String, usize)]) -> Vec<Value> {
+    short
+        .iter()
+        .map(|(team_id, got)| json!({ "team_id": team_id, "got": got }))
+        .collect()
+}
+
 async fn auto_assign(
     State(state): State<AppState>,
     session: AdminSession,
@@ -204,16 +218,19 @@ async fn auto_assign(
     let k = usize::try_from(req.judges_per_team).unwrap_or(usize::MAX);
     let (pairs, short) = plan_assignments(&layout, &active_judges, k);
     if !short.is_empty() && !req.allow_short {
-        let details: Vec<Value> = short
-            .iter()
-            .map(|(team_id, got)| json!({ "team_id": team_id, "got": got }))
-            .collect();
         return Err(AppError::InvalidState(
             "Не для всех команд хватает судей".into(),
-            Some(json!({ "short": details })),
+            Some(json!({ "short": short_details(&short) })),
         ));
     }
-    replace_assignments(&mut tx, &event_id, &pairs).await?;
+    if pairs.is_empty() {
+        // Would silently leave every judge without teams (or reset the mode).
+        return Err(AppError::InvalidState(
+            "Не удалось назначить ни одного судью".into(),
+            Some(json!({ "short": short_details(&short) })),
+        ));
+    }
+    replace_assignments(&mut tx, &event_id, &pairs, true).await?;
     audit::record(
         &mut *tx,
         Some(&event_id),

@@ -8,7 +8,13 @@ Source of truth for the rewrite. The previous implementation lives on the `v1` b
 - One Rust binary `judgeflow` (Axum + Tokio + SQLx/SQLite). Frontend (React + Vite) is built to
   `web/dist` and embedded into the binary with `rust-embed`. No Redis, no Nginx, no Node at runtime.
 - SQLite in `DATA_DIR/judgeflow.db`: WAL, `foreign_keys=ON`, `busy_timeout=5000`, short transactions.
-  Migrations: `migrations/*.sql` via `sqlx::migrate!`, applied on startup.
+  Migrations: `migrations/*.sql` via `sqlx::migrate!`, applied on startup. Migration `0005` runs without a
+  transaction (it needs `PRAGMA foreign_keys=OFF`) and does its own `BEGIN`/`COMMIT`; a crash in the
+  instant between its `COMMIT` and sqlx's bookkeeping insert leaves the schema migrated but unrecorded, and
+  the next start fails on `events_new`/`comparisons` already existing. Recovery (applied checksums must not
+  change, so the file is never edited): stop the server and run
+  `sqlite3 DATA_DIR/judgeflow.db "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) SELECT 5, 'rounds pairwise', 1, X'<sha384 of the file>', 0"`
+  or restore from a backup taken before the upgrade. Back up `DATA_DIR` before upgrading.
 - Config (env, also as CLI flags of `serve`):
   - `JUDGEFLOW_ADDR` — listen address, default `0.0.0.0:8080`.
   - `JUDGEFLOW_DATA_DIR` — default `./data` (DB, uploads, `secret.key`).
@@ -18,9 +24,11 @@ Source of truth for the rewrite. The previous implementation lives on the `v1` b
   - `JUDGEFLOW_SECRET_KEY` — optional; key material for encrypting TOTP secrets. If unset, a random
     key is generated once into `DATA_DIR/secret.key` (mode 0600) and reused.
   - `JUDGEFLOW_TRUST_PROXY` — bool, default `false`. When true, the client IP used for rate limiting
-    is taken from `CF-Connecting-IP`, else the first `X-Forwarded-For` entry, else the peer address.
-    Enable only behind a proxy/tunnel (e.g. Cloudflare Tunnel) that sets these headers; otherwise
-    clients could spoof their IP. When false, only the peer address is used.
+    is taken from `CF-Connecting-IP`, else the LAST `X-Forwarded-For` entry (appended by the trusted proxy;
+    earlier entries are client-controlled), else the peer address. Enable only behind a proxy/tunnel
+    (e.g. Cloudflare Tunnel) that sets these headers, and make sure the app port is NOT reachable directly
+    (bind to `127.0.0.1` or do not publish it); otherwise clients could spoof their IP.
+    When false, only the peer address is used.
   - `RUST_LOG` — tracing filter, default `info`.
 - CLI:
   - `judgeflow serve` (default when no subcommand)
@@ -143,6 +151,7 @@ Per-judge breakdown is public only when `published` (from the latest snapshot). 
 
 One `tokio::sync::broadcast` channel per event (created lazily). Messages are invalidation hints, not data:
 `event: change` / `data: {"kind": "scores" | "status" | "event" | "composition" | "alert" | "judges" | "presence" | "stage"}`.
+The public stream is filtered to `scores`, `status`, `event`, `composition`, `stage` (no `presence`, `judges`, `alert`).
 `presence` is sent only for judge heartbeats (last seen / pending count); judge clients ignore it
 (as well as `scores`), the admin client treats it like `judges`. `judges` is for real judge changes.
 Clients debounce (~500 ms) and refetch the relevant endpoint. Keep-alive comment every 15 s.
@@ -263,6 +272,9 @@ Frontend:
 
 ## 12. Tracks, assignments, conflicts, templates, emergency export (stage 3)
 
+Migration `0006_assignment_mode.sql` adds `events.assignments_enabled INTEGER NOT NULL DEFAULT 0` (initialized to 1
+for events that had assignments); it is exposed in `EventFull.event`.
+
 Migration `0004_tracks_assignments.sql`:
 ```
 tracks(id PK, event_id FK CASCADE, name, sort_order)
@@ -275,8 +287,9 @@ events.stage_track_id NULL FK→tracks ON DELETE SET NULL  -- which track the st
 
 Rules:
 - **Team criteria** = criteria with `track_id IS NULL` or `= team.track_id`.
-- **Judge's teams** = all teams when the event has no assignments at all; once the event has ≥1 assignment,
-  only the judge's assigned teams (a judge without assignments judges nothing); minus conflicts
+- **Judge's teams** = all teams while `events.assignments_enabled = 0`; once it is 1, only the judge's assigned
+  teams (a judge without assignments judges nothing, even if the last assignment row disappears, e.g. its judge
+  was deleted); minus conflicts
   (a conflict always wins). A judge never sees, scores or is counted for teams outside this set.
 - A judge's **sheet for a team** is complete when every team criterion is scored. Submit requires complete
   sheets for all of the judge's teams; `scored_count`/matrix totals use the judge's teams × team criteria.
@@ -297,11 +310,13 @@ API:
   `PUT /api/events/:id/tracks/order`. Teams/criteria create/patch/bulk accept `track_id`.
 - `EventFull` adds `tracks`, `assignments: [{judge_id, team_id}]`, `conflicts: [{judge_id, team_id}]`;
   teams/criteria carry `track_id`.
-- `PUT /api/events/:id/assignments` `{pairs: [{judge_id, team_id}]}` — replaces all; `[]` = everyone judges everything.
+- `PUT /api/events/:id/assignments` `{pairs: [{judge_id, team_id}]}` — replaces all and sets `assignments_enabled` = 1; `[]` sets it to 0 =
+  the explicit reset to "everyone judges everything".
 - `POST /api/events/:id/assignments/auto` `{judges_per_team}` — replaces all assignments deterministically:
   teams in order; for each team pick the `judges_per_team` active judges without a conflict with the fewest
   assignments so far (ties → judge creation order). `409` if some team can't get enough judges
-  (`details.short: [{team_id, got}]`) unless `allow_short: true`.
+  (`details.short: [{team_id, got}]`) unless `allow_short: true`. A plan with no pairs at all (e.g. no eligible judges) is always `409` (`details.short`),
+  so it never silently resets the mode. A successful auto-assign sets `assignments_enabled` = 1.
 - `PUT /api/events/:id/conflicts` `{pairs}` — replaces all.
 - Matrix cells add `assigned: bool`, `conflict: bool`; `total` = team criteria count (0 for teams outside the judge's set).
 - Judge session: `teams` only the judge's teams (with `track_id`), `criteria` with `track_id`, `tracks`.
@@ -369,6 +384,10 @@ comparisons(id PK, event_id FK CASCADE, judge_id FK CASCADE, team_a FK CASCADE, 
 - `PATCH /api/events/:id {normalization}`: allowed in `draft`/`judging`/`locked`; `409 invalid_state` once `finalized`/`published`
   (snapshots are fixed); `center` is rejected for `pairwise` events (and switching to `pairwise` resets it to `none`).
 - Rows add `raw_score_x100` (score without normalization) when normalization is on; `judges[].score_x100` stays raw.
+- Centered scores are unbounded: `J'` (and the team score) may fall below 0 or above the 0–100 range, and CSV/UI
+  must render negatives (`-33,33`). Rubric score writes are rejected (`invalid_state`) in `pairwise` events, and the
+  judge session has no `criteria` there. On reserve and submit, a judge's undecided pairs whose teams are no longer
+  both covered by the judge (assignments/conflicts) or no longer share a track are deleted.
 - UI must warn that centering can distort results when judges saw very different subsets of teams, and show both values.
 
 ### Pairwise backend details (implemented)

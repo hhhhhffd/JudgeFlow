@@ -54,10 +54,13 @@ async fn session(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<Js
     let event = load_event(&mut conn, &auth.event_id).await?;
     let layout = Layout::load(&mut conn, &event.id).await?;
     let teams = layout.judge_teams(&auth.judge_id);
+    // Pairwise events have no rubric criteria.
     let criteria: Vec<_> = layout
         .criteria
         .iter()
-        .filter(|c| teams.iter().any(|t| layout.applies(&t.id, c)))
+        .filter(|c| {
+            event.scoring_mode != "pairwise" && teams.iter().any(|t| layout.applies(&t.id, c))
+        })
         .collect();
     let tracks: Vec<_> = layout
         .tracks
@@ -211,6 +214,34 @@ fn check_items_count(len: usize) -> AppResult<()> {
     Ok(())
 }
 
+/// Drops the judge's undecided pairs that no longer make sense after assignments, conflicts or
+/// tracks changed: both teams must still be covered by the judge and share a track group.
+async fn delete_stale_open_pairs(
+    tx: &mut SqliteConnection,
+    layout: &Layout,
+    judge_id: &str,
+) -> AppResult<()> {
+    let open: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, team_a, team_b FROM comparisons WHERE judge_id = ? AND winner IS NULL",
+    )
+    .bind(judge_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (id, a, b) in open {
+        if layout.judge_covers(judge_id, &a)
+            && layout.judge_covers(judge_id, &b)
+            && layout.same_group(&a, &b)
+        {
+            continue;
+        }
+        sqlx::query("DELETE FROM comparisons WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Applies a batch of score items for one judge inside the caller's write transaction. Shared by
 /// `PUT /judge/scores` and the emergency sheet import so both follow exactly the same rules
 /// (submitted sheet, status window, assignments, validation, last-writer-wins).
@@ -224,6 +255,7 @@ async fn apply_score_items(
 ) -> AppResult<(Vec<Value>, bool)> {
     let now = now_ms();
     let layout = Layout::load(&mut *tx, &event.id).await?;
+    let pairwise = event.scoring_mode == "pairwise";
     let criteria: HashMap<&str, &domain::Criterion> =
         layout.criteria.iter().map(|c| (c.id.as_str(), c)).collect();
     let teams: HashSet<&str> = layout.teams.iter().map(|t| t.id.as_str()).collect();
@@ -243,6 +275,10 @@ async fn apply_score_items(
             _ => false,
         };
         if !in_window {
+            results.push(rejection(item, "invalid_state"));
+            continue;
+        }
+        if pairwise {
             results.push(rejection(item, "invalid_state"));
             continue;
         }
@@ -373,13 +409,14 @@ async fn reserve_pairs(
             None,
         ));
     }
+    let layout = Layout::load(&mut tx, &event.id).await?;
+    delete_stale_open_pairs(&mut tx, &layout, &auth.judge_id).await?;
     let open = load_comparisons(&mut tx, &auth.judge_id, true).await?;
     let want = req.count as usize;
     if event.status != "judging" || submitted_at.is_some() || open.len() >= want {
         return Ok(Json(json!({ "comparisons": open })));
     }
 
-    let layout = Layout::load(&mut tx, &event.id).await?;
     let groups: Vec<Vec<String>> = layout
         .groups()
         .into_iter()
@@ -657,6 +694,8 @@ async fn submit(
         return Ok(Json(judge_json(&auth, submitted_at)));
     }
     if event.scoring_mode == "pairwise" {
+        let layout = Layout::load(&mut tx, &event.id).await?;
+        delete_stale_open_pairs(&mut tx, &layout, &auth.judge_id).await?;
         let open: Vec<String> = sqlx::query_scalar(
             "SELECT id FROM comparisons WHERE judge_id = ? AND winner IS NULL \
              ORDER BY created_at, rowid",

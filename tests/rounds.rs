@@ -689,3 +689,82 @@ async fn rubric_events_still_require_criteria() {
     assert_eq!(blocked.status, StatusCode::CONFLICT);
     assert_eq!(blocked.body["details"]["missing"], json!(["criteria"]));
 }
+
+#[tokio::test]
+async fn centered_scores_may_be_negative_and_csv_formats_them() {
+    // a, b, c, d, e = Альфа, Бета + three more. Judge L scores a=100%, b=0; judge S scores c, d, e = 0.
+    // Overall mean 20, offset_L = +30, offset_S = -20, so b' = -30 (below 0) and a' = 70.
+    let fx = Fixture::new(2, false).await;
+    let more = fx
+        .admin(
+            Method::POST,
+            &format!("/events/{}/teams/bulk", fx.event_id),
+            Some(json!({ "teams": [{ "name": "Вега" }, { "name": "Дельта" }, { "name": "Эпсилон" }] })),
+        )
+        .await;
+    assert_eq!(more.status, StatusCode::OK, "{:?}", more.body);
+    let teams: Vec<String> = fx.team_ids.iter().cloned().chain(ids(&more.body)).collect();
+    let pairs: Vec<Value> = [(0, 0), (0, 1), (1, 2), (1, 3), (1, 4)]
+        .iter()
+        .map(|(j, t)| json!({ "judge_id": fx.judges[*j].0, "team_id": teams[*t] }))
+        .collect();
+    let resp = fx
+        .admin(
+            Method::PUT,
+            &format!("/events/{}/assignments", fx.event_id),
+            Some(json!({ "pairs": pairs })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    assert_eq!(
+        patch_event(&fx, json!({ "normalization": "center" }))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        fx.transition(json!({ "to": "judging" })).await.status,
+        StatusCode::OK
+    );
+    let at = now_ms();
+    for (judge, team, c0, c1) in [
+        (0, 0, 1000, 500),
+        (0, 1, 0, 0),
+        (1, 2, 0, 0),
+        (1, 3, 0, 0),
+        (1, 4, 0, 0),
+    ] {
+        let items = json!([
+            { "team_id": teams[team], "criterion_id": fx.criterion_ids[0], "value_x100": c0, "edited_at": at },
+            { "team_id": teams[team], "criterion_id": fx.criterion_ids[1], "value_x100": c1, "edited_at": at },
+        ]);
+        let resp = fx.put_scores(judge, items).await;
+        assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    }
+    let results = fx
+        .admin(
+            Method::GET,
+            &format!("/events/{}/results?mode=provisional", fx.event_id),
+            None,
+        )
+        .await;
+    let scores: std::collections::HashMap<String, i64> = scores_by_name(&results.body)
+        .into_iter()
+        .map(|(name, score, _)| (name, score))
+        .collect();
+    assert_eq!(scores["Альфа"], 7000);
+    assert_eq!(scores["Бета"], -3000);
+    assert_eq!(scores["Вега"], 2000);
+
+    let csv = fx
+        .admin(
+            Method::GET,
+            &format!("/events/{}/export.csv", fx.event_id),
+            None,
+        )
+        .await;
+    assert_eq!(csv.status, StatusCode::OK);
+    let text = csv.text();
+    assert!(text.contains(";-30,00;"), "{text}");
+    assert!(text.contains(";70,00;"), "{text}");
+}

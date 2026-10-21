@@ -1066,3 +1066,67 @@ async fn unassigned_judge_judges_nothing_once_assignments_exist() {
     assert_eq!(t.assign("assignments", &[]).await.status, StatusCode::OK);
     assert_eq!(team_ids(&t.session(3).await).len(), 3);
 }
+
+#[tokio::test]
+async fn deleting_the_only_assigned_judge_keeps_assignment_mode() {
+    let t = tracked(2, false).await;
+    let judge0 = t.fx.judges[0].0.clone();
+    let pairs = json!([{ "judge_id": judge0, "team_id": t.teams[0] }]);
+    let resp =
+        t.fx.admin(
+            Method::PUT,
+            &format!("/events/{}/assignments", t.fx.event_id),
+            Some(json!({ "pairs": pairs })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    assert_eq!(resp.body["event"]["assignments_enabled"], true);
+    let removed =
+        t.fx.admin(Method::DELETE, &format!("/judges/{judge0}"), None)
+            .await;
+    assert!(removed.status.is_success(), "{:?}", removed.body);
+    let started = t.fx.transition(json!({ "to": "judging" })).await;
+    assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
+    // The remaining judge still judges nothing instead of everything.
+    assert!(team_ids(&t.session(1).await).is_empty());
+
+    // The explicit empty list is the reset.
+    let reset = t.assign("assignments", &[]).await;
+    assert_eq!(reset.status, StatusCode::OK);
+    assert_eq!(reset.body["event"]["assignments_enabled"], false);
+    assert_eq!(team_ids(&t.session(1).await).len(), 3);
+}
+
+#[tokio::test]
+async fn auto_assign_with_no_eligible_judges_is_a_conflict_even_when_short_is_allowed() {
+    let t = tracked(1, false).await;
+    let resp =
+        t.fx.admin(
+            Method::POST,
+            &format!("/events/{}/assignments/auto", t.fx.event_id),
+            Some(json!({ "judges_per_team": 1 })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK);
+    // The only judge goes inactive: nobody is eligible.
+    let judge = t.fx.judges[0].0.clone();
+    let off =
+        t.fx.admin(
+            Method::PATCH,
+            &format!("/judges/{judge}"),
+            Some(json!({ "is_active": false })),
+        )
+        .await;
+    assert!(off.status.is_success(), "{:?}", off.body);
+    let resp =
+        t.fx.admin(
+            Method::POST,
+            &format!("/events/{}/assignments/auto", t.fx.event_id),
+            Some(json!({ "judges_per_team": 1, "allow_short": true })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::CONFLICT, "{:?}", resp.body);
+    let full = t.fx.event().await;
+    assert_eq!(full["event"]["assignments_enabled"], true);
+    assert_eq!(full["assignments"].as_array().unwrap().len(), 3);
+}

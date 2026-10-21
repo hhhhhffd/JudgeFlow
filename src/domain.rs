@@ -45,6 +45,8 @@ pub struct Event {
     pub parent_event_id: Option<String>,
     pub round: i64,
     pub normalization: String,
+    /// Explicit assignment mode (SPEC section 12): judges cover only their assigned teams.
+    pub assignments_enabled: bool,
     pub locked_at: Option<i64>,
     #[serde(skip)]
     pub created_by: Option<String>,
@@ -226,8 +228,9 @@ pub struct Layout {
     pub teams: Vec<Team>,
     pub criteria: Vec<Criterion>,
     team_track: HashMap<String, Option<String>>,
+    assignments_enabled: bool,
     assigned: HashMap<String, HashSet<String>>,
-    conflicts: HashSet<(String, String)>,
+    conflicts: HashMap<String, HashSet<String>>,
 }
 
 impl Layout {
@@ -235,14 +238,20 @@ impl Layout {
         let tracks = load_tracks(&mut *conn, event_id).await?;
         let teams = load_teams(&mut *conn, event_id).await?;
         let criteria = load_criteria(&mut *conn, event_id).await?;
+        let assignments_enabled: bool =
+            sqlx::query_scalar("SELECT assignments_enabled FROM events WHERE id = ?")
+                .bind(event_id)
+                .fetch_optional(&mut *conn)
+                .await?
+                .ok_or(AppError::NotFound)?;
         let mut assigned: HashMap<String, HashSet<String>> = HashMap::new();
         for (judge, team) in load_assignments(&mut *conn, event_id).await? {
             assigned.entry(judge).or_default().insert(team);
         }
-        let conflicts = load_conflicts(&mut *conn, event_id)
-            .await?
-            .into_iter()
-            .collect();
+        let mut conflicts: HashMap<String, HashSet<String>> = HashMap::new();
+        for (judge, team) in load_conflicts(&mut *conn, event_id).await? {
+            conflicts.entry(judge).or_default().insert(team);
+        }
         let team_track = teams
             .iter()
             .map(|t| (t.id.clone(), t.track_id.clone()))
@@ -252,6 +261,7 @@ impl Layout {
             teams,
             criteria,
             team_track,
+            assignments_enabled,
             assigned,
             conflicts,
         })
@@ -265,14 +275,23 @@ impl Layout {
 
     pub fn has_conflict(&self, judge_id: &str, team_id: &str) -> bool {
         self.conflicts
-            .contains(&(judge_id.to_string(), team_id.to_string()))
+            .get(judge_id)
+            .is_some_and(|teams| teams.contains(team_id))
     }
 
-    /// All teams while the event has no assignments; afterwards only the judge's assigned teams
+    /// All teams while assignments are disabled; afterwards only the judge's assigned teams
     /// (a judge without assignments covers nothing). A conflict always wins.
     pub fn judge_covers(&self, judge_id: &str, team_id: &str) -> bool {
         !self.has_conflict(judge_id, team_id)
-            && (self.assigned.is_empty() || self.has_assignment(judge_id, team_id))
+            && (!self.assignments_enabled || self.has_assignment(judge_id, team_id))
+    }
+
+    /// Whether both teams exist and belong to the same track group (or both have no track).
+    pub fn same_group(&self, team_a: &str, team_b: &str) -> bool {
+        match (self.team_track.get(team_a), self.team_track.get(team_b)) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
     }
 
     /// Whether `criterion` is scored for `team_id` (unknown teams get only track-less criteria).
@@ -380,17 +399,25 @@ async fn fill_scored_counts(
     Ok(())
 }
 
-pub async fn load_judges(
+/// Judges with `scored_count` left at 0, for callers that scan scores themselves.
+pub async fn load_judges_unscored(
     conn: &mut SqliteConnection,
     event_id: &str,
 ) -> AppResult<Vec<JudgeSummary>> {
-    let mut judges = sqlx::query_as::<_, JudgeSummary>(
+    Ok(sqlx::query_as::<_, JudgeSummary>(
         "SELECT j.id, j.name, j.is_active, j.submitted_at, j.last_seen_at, j.pending_count, \
          0 AS scored_count FROM judges j WHERE j.event_id = ? ORDER BY j.created_at, j.rowid",
     )
     .bind(event_id)
-    .fetch_all(&mut *conn)
-    .await?;
+    .fetch_all(conn)
+    .await?)
+}
+
+pub async fn load_judges(
+    conn: &mut SqliteConnection,
+    event_id: &str,
+) -> AppResult<Vec<JudgeSummary>> {
+    let mut judges = load_judges_unscored(&mut *conn, event_id).await?;
     fill_scored_counts(conn, event_id, &mut judges).await?;
     Ok(judges)
 }
