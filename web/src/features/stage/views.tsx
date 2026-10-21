@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import type { PublicRankingRow, StageResponse } from '@/api/types'
 import { stageText } from '@/i18n/stage'
 import { formatX100 } from '@/lib/format'
+import { boardColumns } from '@/lib/ranking'
 import { cn } from '@/lib/utils'
 import { boardScale, groupByRank, podiumSlots, type RankGroup } from './lib'
 
@@ -147,29 +148,27 @@ function LowerRow({ row }: { row: PublicRankingRow }) {
 
 export function Leaderboard({ data, teamsLabel }: { data: StageResponse; teamsLabel: string }) {
   const { stage, rows, event } = data
-  const criteria = event.criteria
-  const showCriteria = criteria.length > 0 && rows.some((r) => r.criteria.length > 0)
+  const columns = boardColumns(rows, event.criteria)
   const scale = boardScale(rows.length)
   return (
     <section
       aria-label={teamsLabel}
-      className={cn('stage-board mx-auto w-full max-w-[100rem]', showCriteria && 'stage-board-crit')}
-      style={{ fontSize: `${scale}rem`, ['--n' as string]: criteria.length }}
+      className={cn('stage-board mx-auto w-full max-w-[100rem]', columns.length > 0 && 'stage-board-crit')}
+      style={{ fontSize: `${scale}rem`, ['--n' as string]: columns.length }}
     >
       <div className="stage-board-row px-[1.2em] pb-[0.6em] text-[0.85em] font-medium tracking-wide text-muted-foreground uppercase">
         <span>{stageText.rank}</span>
         <span>{teamsLabel}</span>
-        {showCriteria &&
-          criteria.map((c) => (
-            <span key={c.id} className="stage-crit truncate text-right normal-case">
-              {c.name}
-            </span>
-          ))}
+        {columns.map((c) => (
+          <span key={c.key} className="stage-crit truncate text-right normal-case">
+            {c.label}
+          </span>
+        ))}
         <span className="text-right">{stageText.score}</span>
       </div>
       <ol className="grid gap-[0.45em]">
         {rows.map((row) => (
-          <BoardRow key={row.team_id} row={row} criteria={criteria} showCriteria={showCriteria} highlighted={row.rank !== null && row.rank <= stage.top_n} />
+          <BoardRow key={row.team_id} row={row} columns={columns} highlighted={row.rank !== null && row.rank <= stage.top_n} />
         ))}
       </ol>
     </section>
@@ -178,13 +177,11 @@ export function Leaderboard({ data, teamsLabel }: { data: StageResponse; teamsLa
 
 function BoardRow({
   row,
-  criteria,
-  showCriteria,
+  columns,
   highlighted,
 }: {
   row: PublicRankingRow
-  criteria: StageResponse['event']['criteria']
-  showCriteria: boolean
+  columns: ReturnType<typeof boardColumns>
   highlighted: boolean
 }) {
   const fresh = useFresh(row.team_id)
@@ -208,12 +205,11 @@ function BoardRow({
           <span className="block text-[0.9em] text-muted-foreground">{row.score_x100 === null ? stageText.noScore : stageText.tie}</span>
         )}
       </span>
-      {showCriteria &&
-        criteria.map((c) => (
-          <span key={c.id} className="stage-crit num text-right text-[1.4em] font-medium text-muted-foreground">
-            {formatX100(row.criteria.find((x) => x.criterion_id === c.id)?.avg_x100)}
-          </span>
-        ))}
+      {columns.map((c) => (
+        <span key={c.key} className="stage-crit num text-right text-[1.4em] font-medium text-muted-foreground">
+          {c.value(row)}
+        </span>
+      ))}
       <span className={cn('num text-right text-[2.3em] leading-none font-extrabold', winner && 'text-signal')}>{formatX100(row.score_x100)}</span>
     </li>
   )

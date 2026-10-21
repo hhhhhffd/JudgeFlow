@@ -14,7 +14,7 @@ import { Hero, Leaderboard, Podium, SeenContext } from './views'
 const REFETCH_DEBOUNCE_MS = 200
 const PROBE_MS = 15_000
 const SAFETY_REFRESH_MS = 30_000
-const STAGE_KINDS: readonly ChangeKind[] = ['stage', 'status', 'event']
+const STAGE_KINDS: readonly ChangeKind[] = ['stage', 'status', 'event', 'composition']
 
 /** Scales every rem on the page with the screen, so the same layout reads from the back of a hall and on a phone. */
 function useScreenScale() {

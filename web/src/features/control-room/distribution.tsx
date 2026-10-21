@@ -15,12 +15,13 @@ import { errorText } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { inJudgeSet, pairKey, pairSet } from '@/lib/tracks'
 import { ConfirmDialog } from './confirm-dialog'
-import { useEventMutation, useFull } from './context'
+import { useAssignmentsOn, useEventMutation, useFull } from './context'
 import { assignmentPairs, sameSet } from './lib'
 
 /** Remounts the editor when the server copy changes, so a fresh state never mixes with stale local edits. */
 export function Distribution() {
   const { event, judges, teams, assignments, conflicts } = useFull()
+  const assignmentsOn = useAssignmentsOn()
   const frozen = event.status === 'finalized' || event.status === 'published'
   const sig = JSON.stringify([assignments.map((p) => pairKey(p.judge_id, p.team_id)).sort(), conflicts.map((p) => pairKey(p.judge_id, p.team_id)).sort()])
   return (
@@ -30,7 +31,7 @@ export function Distribution() {
       ) : (
         <>
           {frozen && <p role="status" className="text-sm text-muted-foreground">{cr.assign.frozen}</p>}
-          <AutoAssign disabled={frozen} hasAssignments={assignments.length > 0} />
+          <AutoAssign disabled={frozen} hasAssignments={assignmentsOn} />
           <DistributionEditor key={sig} />
         </>
       )}
@@ -41,10 +42,11 @@ export function Distribution() {
 function DistributionEditor() {
   const { event, judges, teams, assignments, conflicts: serverConflicts } = useFull()
   const frozen = event.status === 'finalized' || event.status === 'published'
+  const assignmentsOn = useAssignmentsOn()
   const baseAssigned = pairSet(assignments)
   const baseConflicts = pairSet(serverConflicts)
   // No assignments at all means everyone judges everything: show that explicitly in the grid.
-  const initialAssigned = () => (baseAssigned.size === 0 ? new Set(judges.flatMap((j) => teams.map((t) => pairKey(j.id, t.id)))) : baseAssigned)
+  const initialAssigned = () => (!assignmentsOn ? new Set(judges.flatMap((j) => teams.map((t) => pairKey(j.id, t.id)))) : baseAssigned)
   const [assigned, setAssigned] = useState(initialAssigned)
   const [conflicts, setConflicts] = useState(baseConflicts)
 
@@ -53,7 +55,7 @@ function DistributionEditor() {
   const allOff = pairs.length === 0 && assigned.size === 0 && judges.length > 0 && teams.length > 0
   const everyone = pairs.length === 0 && !allOff
 
-  const inSet = (j: JudgeSummary, teamId: string) => inJudgeSet(j.id, teamId, everyone ? new Set() : assigned, conflicts)
+  const inSet = (j: JudgeSummary, teamId: string) => inJudgeSet(j.id, teamId, everyone ? new Set() : assigned, conflicts, !everyone)
   const loads = judges.map((j) => teams.filter((t) => inSet(j, t.id)).length)
   const idle = judges.filter((_, i) => loads[i] === 0)
   const uncovered = teams.filter((t) => !judges.some((j) => j.is_active && inSet(j, t.id)))

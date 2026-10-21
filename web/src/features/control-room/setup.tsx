@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { ArrowDown, ArrowUp, ClipboardPaste, LayoutTemplate, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ClipboardPaste, LayoutTemplate, Lock, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react'
 import { eventsApi } from '@/api/endpoints'
-import type { Criterion, ScoringMode, Team, Track, UpdateEventRequest } from '@/api/types'
+import type { Criterion, Normalization, ScoringMode, Team, Track, UpdateEventRequest } from '@/api/types'
 import { EmptyState } from '@/components/state-views'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -127,6 +127,7 @@ function RulesCard() {
   const { event } = useFull()
   const draft = useIsDraft()
   const [mode, setMode] = useState<ScoringMode>(event.scoring_mode)
+  const [normalize, setNormalize] = useState(event.normalization === 'center')
   const [notes, setNotes] = useState(event.notes_enabled)
   const [quorum, setQuorum] = useState(String(event.quorum))
   const [teamsLabel, setTeamsLabel] = useState(event.teams_label ?? '')
@@ -136,6 +137,8 @@ function RulesCard() {
   const save = useEventMutation((body: UpdateEventRequest) => eventsApi.update(event.id, body), cr.setup.saved)
   const quorumNum = Number(quorum)
   const valid = Number.isInteger(quorumNum) && quorumNum >= 1
+  const pairwise = mode === 'pairwise'
+  const normalizationFrozen = event.status === 'finalized' || event.status === 'published'
 
   return (
     <Card title={cr.setup.rules}>
@@ -145,7 +148,9 @@ function RulesCard() {
           e.preventDefault()
           save.mutate({
             // Mode and notes are draft-only; sending them later would be rejected.
-            ...(draft ? { scoring_mode: mode, notes_enabled: notes } : {}),
+            ...(draft ? { scoring_mode: mode, notes_enabled: pairwise ? false : notes } : {}),
+            // Centering is a rubric-only setting and is fixed once the results are final.
+            ...(!pairwise && !normalizationFrozen ? { normalization: (normalize ? 'center' : 'none') satisfies Normalization } : {}),
             quorum: quorumNum,
             teams_label: teamsLabel.trim() || null,
             teams_label_enabled: teamsOn,
@@ -156,8 +161,8 @@ function RulesCard() {
       >
         <fieldset disabled={!draft} className="grid gap-2">
           <legend className="mb-1 text-sm font-medium">{cr.setup.modeLabel}</legend>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {(['team', 'criterion'] as const).map((m) => (
+          <div className="grid gap-2 sm:grid-cols-3">
+            {(['team', 'criterion', 'pairwise'] as const).map((m) => (
               <label
                 key={m}
                 className={cn(
@@ -167,20 +172,39 @@ function RulesCard() {
               >
                 <input type="radio" name="mode" className="mt-1 accent-[var(--primary)]" checked={mode === m} onChange={() => setMode(m)} />
                 <span>
-                  <span className="block text-sm font-medium">{m === 'team' ? cr.setup.modeTeam : cr.setup.modeCriterion}</span>
-                  <span className="block text-xs text-muted-foreground">{m === 'team' ? cr.setup.modeTeamHint : cr.setup.modeCriterionHint}</span>
+                  <span className="block text-sm font-medium">{MODE_TEXT[m].label}</span>
+                  <span className="block text-xs text-muted-foreground">{MODE_TEXT[m].hint}</span>
                 </span>
               </label>
             ))}
           </div>
         </fieldset>
-        <div className="flex items-start gap-3">
-          <Switch id="r-notes" checked={notes} onCheckedChange={setNotes} disabled={!draft} />
-          <div>
-            <Label htmlFor="r-notes">{cr.setup.notes}</Label>
-            <p className="text-xs text-muted-foreground">{cr.setup.notesHint}</p>
+        {!pairwise && (
+          <div className="flex items-start gap-3">
+            <Switch id="r-notes" checked={notes} onCheckedChange={setNotes} disabled={!draft} />
+            <div>
+              <Label htmlFor="r-notes">{cr.setup.notes}</Label>
+              <p className="text-xs text-muted-foreground">{cr.setup.notesHint}</p>
+            </div>
           </div>
-        </div>
+        )}
+        {!pairwise && (
+          <div className="grid gap-2">
+            <div className="flex items-start gap-3">
+              <Switch id="r-normalize" checked={normalize} onCheckedChange={setNormalize} disabled={normalizationFrozen} />
+              <div>
+                <Label htmlFor="r-normalize">{cr.setup.normalization}</Label>
+                <p className="text-xs text-muted-foreground">{normalizationFrozen ? cr.setup.normalizationFrozen : cr.setup.normalizationHint}</p>
+              </div>
+            </div>
+            {normalize && (
+              <p role="note" className="flex gap-2 rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+                {cr.setup.normalizationWarning}
+              </p>
+            )}
+          </div>
+        )}
         <Field label={cr.setup.quorumLabel} htmlFor="r-quorum" hint={cr.setup.quorumHint}>
           <Input id="r-quorum" inputMode="numeric" className="w-24" value={quorum} onChange={(e) => setQuorum(e.target.value)} aria-invalid={!valid} />
         </Field>
@@ -190,7 +214,7 @@ function RulesCard() {
             <p className="text-xs text-muted-foreground">{cr.setup.labelsHint}</p>
           </div>
           <LabelRow id="teams" toggle={cr.setup.teamsLabelToggle} label={cr.setup.teamsLabel} on={teamsOn} setOn={setTeamsOn} value={teamsLabel} setValue={setTeamsLabel} placeholder="Команды" />
-          <LabelRow id="crit" toggle={cr.setup.criteriaLabelToggle} label={cr.setup.criteriaLabel} on={critOn} setOn={setCritOn} value={critLabel} setValue={setCritLabel} placeholder="Критерии" />
+          {!pairwise && <LabelRow id="crit" toggle={cr.setup.criteriaLabelToggle} label={cr.setup.criteriaLabel} on={critOn} setOn={setCritOn} value={critLabel} setValue={setCritLabel} placeholder="Критерии" />}
         </div>
         <div>
           <Button type="submit" disabled={!valid || save.isPending}>
@@ -200,6 +224,12 @@ function RulesCard() {
       </form>
     </Card>
   )
+}
+
+const MODE_TEXT: Record<ScoringMode, { label: string; hint: string }> = {
+  team: { label: cr.setup.modeTeam, hint: cr.setup.modeTeamHint },
+  criterion: { label: cr.setup.modeCriterion, hint: cr.setup.modeCriterionHint },
+  pairwise: { label: cr.setup.modePairwise, hint: cr.setup.modePairwiseHint },
 }
 
 function LabelRow(p: { id: string; toggle: string; label: string; on: boolean; setOn: (v: boolean) => void; value: string; setValue: (v: string) => void; placeholder: string }) {
@@ -549,6 +579,7 @@ function CriteriaCard() {
   return (
     <Card
       title={cr.setup.criteria}
+      hint={event.scoring_mode === 'pairwise' ? cr.setup.criteriaOptionalHint : undefined}
       action={
         <>
           <Button variant="outline" size="sm" disabled={!draft} onClick={() => setTemplating(true)}>

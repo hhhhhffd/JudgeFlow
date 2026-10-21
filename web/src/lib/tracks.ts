@@ -31,9 +31,9 @@ export function criteriaOfGroup<C extends { track_id: Id | null }>(criteria: C[]
 export const pairKey = (judgeId: Id, teamId: Id) => `${judgeId}:${teamId}`
 
 /** A judge is limited to explicit assignments only once the event has at least one (SPEC §12). */
-export function inJudgeSet(judgeId: Id, teamId: Id, assigned: Set<string>, conflicts: Set<string>): boolean {
+export function inJudgeSet(judgeId: Id, teamId: Id, assigned: Set<string>, conflicts: Set<string>, enabled = assigned.size > 0): boolean {
   if (conflicts.has(pairKey(judgeId, teamId))) return false
-  return assigned.size === 0 || assigned.has(pairKey(judgeId, teamId))
+  return !enabled || assigned.has(pairKey(judgeId, teamId))
 }
 
 export const pairSet = (pairs: JudgeTeamPair[]) => new Set(pairs.map((p) => pairKey(p.judge_id, p.team_id)))

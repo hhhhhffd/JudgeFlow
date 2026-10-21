@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ExternalLink, MoreHorizontal, Trash2 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -7,6 +7,7 @@ import { ApiError } from '@/api/client'
 import { eventsApi } from '@/api/endpoints'
 import type { UnsubmittedDetails } from '@/api/types'
 import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cr } from '@/i18n/control-room'
@@ -20,6 +21,9 @@ export function EventHeader() {
   const [action, setAction] = useState<LifecycleAction | null>(null)
   const [deleting, setDeleting] = useState(false)
   const actions = LIFECYCLE[event.status]
+  const events = useQuery({ queryKey: ['events'], queryFn: eventsApi.list })
+  const parent = events.data?.find((e) => e.id === event.parent_event_id)
+  const children = events.data?.filter((e) => e.parent_event_id === event.id) ?? []
 
   return (
     <header className="mb-4 grid gap-3">
@@ -32,7 +36,27 @@ export function EventHeader() {
           <h1 className="text-2xl font-semibold tracking-tight break-words">{event.title}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <StatusBadge status={event.status} />
+            {(event.round > 1 || children.length > 0) && <Badge variant="outline">{cr.header.round(event.round)}</Badge>}
           </div>
+          {(parent || children.length > 0) && (
+            <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              {parent && (
+                <Link to={`/events/${parent.id}`} className="underline-offset-4 hover:text-foreground hover:underline">
+                  {cr.header.fromRound(parent.title)}
+                </Link>
+              )}
+              {children.length > 0 && (
+                <span className="flex flex-wrap items-center gap-x-3">
+                  {cr.header.nextRounds}:
+                  {children.map((c) => (
+                    <Link key={c.id} to={`/events/${c.id}`} className="underline-offset-4 hover:text-foreground hover:underline">
+                      {c.title}
+                    </Link>
+                  ))}
+                </span>
+              )}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {actions.map((a) => (

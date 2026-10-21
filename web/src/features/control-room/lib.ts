@@ -1,4 +1,4 @@
-import type { Criterion, EventStatus, JudgeSummary, Matrix, Team, TeamInput, Track } from '@/api/types'
+import type { Criterion, EventStatus, JudgeSummary, Matrix, RankingRow, Team, TeamInput, Track } from '@/api/types'
 import { criterionApplies, inJudgeSet, pairKey } from '@/lib/tracks'
 
 export type PasteRow = TeamInput & {
@@ -61,9 +61,10 @@ export const LIFECYCLE: Record<EventStatus, LifecycleAction[]> = {
 export type CellState = 'attention' | 'submitted' | 'partial' | 'empty'
 
 /** SPEC §9: green submitted, yellow partial/unsubmitted, grey not started, red inactive/pending sync. */
-export function cellState(judge: JudgeSummary, scored: number, total: number): CellState {
+export function cellState(judge: JudgeSummary, scored: number, total: number, pairwise = false): CellState {
   if (!judge.is_active || judge.pending_count > 0) return 'attention'
-  if (judge.submitted_at != null && total > 0 && scored >= total) return 'submitted'
+  // Pairwise has no fixed total: a submitted sheet is complete by definition.
+  if (judge.submitted_at != null && (pairwise || (total > 0 && scored >= total))) return 'submitted'
   if (scored > 0 || judge.submitted_at != null) return 'partial'
   return 'empty'
 }
@@ -77,7 +78,7 @@ export interface Kpis {
   coveragePct: number
 }
 
-export function computeKpis(m: Matrix): Kpis {
+export function computeKpis(m: Matrix, pairwise = false, hasAssignments = false): Kpis {
   const active = new Set(m.judges.filter((j) => j.is_active).map((j) => j.id))
   const scoredTeams = new Set<string>()
   const coveredTeams = new Set<string>()
@@ -88,7 +89,7 @@ export function computeKpis(m: Matrix): Kpis {
     if (active.has(c.judge_id)) {
       scored += c.scored
       total += c.total
-      if (c.total > 0) coveredTeams.add(c.team_id)
+      if (pairwise ? !c.conflict && (!hasAssignments || c.assigned) : c.total > 0) coveredTeams.add(c.team_id)
     }
   }
   return {
@@ -125,13 +126,13 @@ export function formatAgo(ms: number | null, now: number): string {
 }
 
 /** Teams a judge works on (SPEC §12): all while the event has no assignments, else the assigned ones, minus conflicts. */
-export function judgeTeams(judgeId: string, teams: Team[], assigned: Set<string>, conflicts: Set<string>): Team[] {
-  return teams.filter((t) => inJudgeSet(judgeId, t.id, assigned, conflicts))
+export function judgeTeams(judgeId: string, teams: Team[], assigned: Set<string>, conflicts: Set<string>, enabled?: boolean): Team[] {
+  return teams.filter((t) => inJudgeSet(judgeId, t.id, assigned, conflicts, enabled))
 }
 
 /** Number of score cells a judge has to fill: judge's teams × criteria that apply to each team. */
-export function judgeTotal(judgeId: string, teams: Team[], criteria: Criterion[], assigned: Set<string>, conflicts: Set<string>): number {
-  return judgeTeams(judgeId, teams, assigned, conflicts).reduce((n, t) => n + criteria.filter((c) => criterionApplies(c, t)).length, 0)
+export function judgeTotal(judgeId: string, teams: Team[], criteria: Criterion[], assigned: Set<string>, conflicts: Set<string>, enabled?: boolean): number {
+  return judgeTeams(judgeId, teams, assigned, conflicts, enabled).reduce((n, t) => n + criteria.filter((c) => criterionApplies(c, t)).length, 0)
 }
 
 /** Only a complete set of assignments equal to "everything" is stored as the empty list. */
@@ -142,3 +143,11 @@ export function assignmentPairs(judges: { id: string }[], teams: Team[], assigne
 }
 
 export const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x))
+
+/**
+ * Teams to carry over to the next round: per track group, every team ranked within the top `n`
+ * (ties for the last place all pass). Teams without a place never pass.
+ */
+export function topTeamIds(rows: RankingRow[], n: number): string[] {
+  return rows.filter((r) => r.rank !== null && r.rank <= n).map((r) => r.team_id)
+}

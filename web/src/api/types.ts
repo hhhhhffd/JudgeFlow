@@ -107,6 +107,8 @@ export interface EventRecord {
   stage_revealed: number
   /** Track shown on the stage; null = teams without a track / the only group. */
   stage_track_id: Id | null
+  /** Explicit switch for assignments; absent on older servers (then: any assignment row). */
+  assignments_enabled?: boolean
   parent_event_id: Id | null
   round: number
   normalization: Normalization

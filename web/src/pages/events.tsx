@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, MapPin, Plus } from 'lucide-react'
+import { CalendarDays, ChevronDown, ChevronRight, MapPin, Plus } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { eventsApi } from '@/api/endpoints'
@@ -8,6 +8,7 @@ import type { EventListItem } from '@/api/types'
 import { PageContainer } from '@/components/admin-layout'
 import { EmptyState, ErrorState } from '@/components/state-views'
 import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -53,9 +54,10 @@ export default function EventsPage() {
       {events.data?.length === 0 && <EmptyState title={ru.events.emptyTitle} text={ru.events.emptyText} action={createButton} />}
       {events.data && events.data.length > 0 && (
         <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {events.data.map((e) => (
-            <li key={e.id}>
-              <EventCard event={e} />
+          {groupRounds(events.data).map(({ root, rounds }) => (
+            <li key={root.id} className="flex flex-col gap-2">
+              <EventCard event={root} />
+              {rounds.length > 0 && <RoundsList rounds={rounds} />}
             </li>
           ))}
         </ul>
@@ -66,7 +68,41 @@ export default function EventsPage() {
   )
 }
 
-function EventCard({ event }: { event: EventListItem }) {
+/** Rounds hang under the first event of their chain; an event whose parent is gone becomes a root itself. */
+function groupRounds(events: EventListItem[]): { root: EventListItem; rounds: EventListItem[] }[] {
+  const byParent = new Map<string, EventListItem[]>()
+  for (const e of events) {
+    if (e.parent_event_id) byParent.set(e.parent_event_id, [...(byParent.get(e.parent_event_id) ?? []), e])
+  }
+  const known = new Set(events.map((e) => e.id))
+  const descendants = (id: string): EventListItem[] => (byParent.get(id) ?? []).flatMap((c) => [c, ...descendants(c.id)])
+  return events
+    .filter((e) => !e.parent_event_id || !known.has(e.parent_event_id))
+    .map((root) => ({ root, rounds: descendants(root.id).sort((a, b) => a.round - b.round) }))
+}
+
+function RoundsList({ rounds }: { rounds: EventListItem[] }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div className="ml-4 border-l pl-3">
+      <Button variant="ghost" size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="-ml-2">
+        {open ? <ChevronDown /> : <ChevronRight />}
+        {open ? ru.events.hideRounds : ru.events.showRounds(rounds.length)}
+      </Button>
+      {open && (
+        <ul className="mt-2 grid gap-2">
+          {rounds.map((r) => (
+            <li key={r.id}>
+              <EventCard event={r} compact />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function EventCard({ event, compact = false }: { event: EventListItem; compact?: boolean }) {
   return (
     <Link
       to={`/events/${event.id}`}
@@ -74,7 +110,10 @@ function EventCard({ event }: { event: EventListItem }) {
     >
       <div className="flex items-start justify-between gap-3">
         <h2 className="line-clamp-2 text-base leading-snug font-semibold break-words">{event.title}</h2>
-        <StatusBadge status={event.status} />
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <StatusBadge status={event.status} />
+          {event.round > 1 && <Badge variant="outline">{ru.events.round(event.round)}</Badge>}
+        </div>
       </div>
       <div className="space-y-1 text-sm text-muted-foreground">
         <p className="flex items-center gap-2">
@@ -88,7 +127,7 @@ function EventCard({ event }: { event: EventListItem }) {
           </p>
         )}
       </div>
-      <dl className="mt-auto grid grid-cols-4 gap-2 border-t pt-4 text-center">
+      <dl className={compact ? 'sr-only' : 'mt-auto grid grid-cols-4 gap-2 border-t pt-4 text-center'}>
         <Stat label={ru.events.teams} value={event.teams_count} />
         <Stat label={ru.events.criteria} value={event.criteria_count} />
         <Stat label={ru.events.judges} value={event.judges_count} />

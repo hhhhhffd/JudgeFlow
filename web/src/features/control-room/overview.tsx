@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cr } from '@/i18n/control-room'
 import { errorText } from '@/lib/errors'
 import { cn } from '@/lib/utils'
-import { useEventMutation, useFull, useNow } from './context'
+import { useAssignmentsOn, useEventMutation, useFull, useNow } from './context'
 import { cellState, computeKpis, formatAgo, type CellState } from './lib'
 
 const CELL_STYLE: Record<CellState | 'unassigned' | 'conflict', string> = {
@@ -34,10 +34,11 @@ export function Overview() {
 }
 
 function Readiness() {
-  const { teams, criteria, judges } = useFull()
+  const { event, teams, criteria, judges } = useFull()
+  const pairwise = event.scoring_mode === 'pairwise'
   const items = [
     { label: cr.overview.ready.teams, count: teams.length, to: 'setup' },
-    { label: cr.overview.ready.criteria, count: criteria.length, to: 'setup' },
+    ...(pairwise ? [] : [{ label: cr.overview.ready.criteria, count: criteria.length, to: 'setup' }]),
     { label: cr.overview.ready.judges, count: judges.filter((j) => j.is_active).length, to: 'judges' },
   ]
   return (
@@ -45,8 +46,8 @@ function Readiness() {
       <h2 id="ready-h" className="text-base font-semibold">
         {cr.overview.readinessTitle}
       </h2>
-      <p className="mt-1 text-sm text-muted-foreground">{cr.overview.readinessText}</p>
-      <ul className="mt-4 grid gap-2 sm:grid-cols-3">
+      <p className="mt-1 text-sm text-muted-foreground">{pairwise ? cr.overview.readinessTextPairwise : cr.overview.readinessText}</p>
+      <ul className={cn('mt-4 grid gap-2', pairwise ? 'sm:grid-cols-2' : 'sm:grid-cols-3')}>
         {items.map((i) => (
           <li key={i.label} className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3">
             <span className="flex items-center gap-2 text-sm font-medium">
@@ -67,24 +68,26 @@ function Readiness() {
 }
 
 function Monitoring() {
-  const { event, assignments } = useFull()
-  const hasAssignments = assignments.length > 0
+  const { event } = useFull()
+  const hasAssignments = useAssignmentsOn()
+  const pairwise = event.scoring_mode === 'pairwise'
   const matrix = useQuery({ queryKey: ['cr', event.id, 'matrix'], queryFn: () => eventsApi.matrix(event.id) })
 
   if (matrix.isPending) return <Skeleton className="h-72 rounded-xl" />
   if (matrix.isError) return <ErrorState message={errorText(matrix.error)} onRetry={() => void matrix.refetch()} />
   const m = matrix.data
-  const k = computeKpis(m)
+  const k = computeKpis(m, pairwise, hasAssignments)
   const tiles = [
     { label: cr.overview.kpiTeams, value: `${k.teamsWithScores}/${k.teamsTotal}` },
     { label: cr.overview.kpiJudges, value: `${k.judgesSubmitted}/${k.judgesActive}` },
     { label: cr.overview.kpiAttention, value: String(k.attention), hint: cr.overview.attentionHint, warn: k.attention > 0 },
-    { label: cr.overview.kpiCoverage, value: `${k.coveragePct}%` },
+    // No fixed total in pairwise mode, so there is no coverage percentage.
+    ...(pairwise ? [] : [{ label: cr.overview.kpiCoverage, value: `${k.coveragePct}%` }]),
   ]
 
   return (
     <>
-      <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <dl className={cn('grid grid-cols-2 gap-3', pairwise ? 'lg:grid-cols-3' : 'lg:grid-cols-4')}>
         {tiles.map((t) => (
           <div key={t.label} className="rounded-xl border bg-card p-4">
             <dt className="text-xs text-muted-foreground">{t.label}</dt>
@@ -128,12 +131,12 @@ function Monitoring() {
                         const scored = cell?.scored ?? 0
                         const total = cell?.total ?? 0
                         // A conflict wins over an assignment; with assignments present, a team without one is outside the judge's set.
-                        const kind = cell?.conflict ? 'conflict' : hasAssignments && !cell?.assigned ? 'unassigned' : cellState(j, scored, total)
-                        const title = kind === 'conflict' ? cr.overview.cellConflict(j.name, t.name) : kind === 'unassigned' ? cr.overview.cellNotAssigned(j.name, t.name) : cr.overview.cellTitle(j.name, t.name, scored, total)
+                        const kind = cell?.conflict ? 'conflict' : hasAssignments && !cell?.assigned ? 'unassigned' : cellState(j, scored, total, pairwise)
+                        const title = kind === 'conflict' ? cr.overview.cellConflict(j.name, t.name) : kind === 'unassigned' ? cr.overview.cellNotAssigned(j.name, t.name) : pairwise ? cr.overview.cellTitlePairwise(j.name, t.name, scored) : cr.overview.cellTitle(j.name, t.name, scored, total)
                         return (
                           <td key={t.id} className="p-1">
                             <div title={title} className={cn('num mx-auto flex h-9 min-w-12 items-center justify-center rounded-md font-mono text-xs', CELL_STYLE[kind])}>
-                              {kind === 'conflict' ? <ShieldAlert className="size-4" aria-label={title} /> : kind === 'unassigned' ? <span aria-label={title}>—</span> : `${scored}/${total}`}
+                              {kind === 'conflict' ? <ShieldAlert className="size-4" aria-label={title} /> : kind === 'unassigned' ? <span aria-label={title}>—</span> : pairwise ? scored : `${scored}/${total}`}
                             </div>
                           </td>
                         )

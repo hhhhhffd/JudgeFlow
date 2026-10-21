@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Criterion, JudgeSummary, Matrix, Team } from '@/api/types'
-import { assignmentPairs, cellState, computeKpis, formatAgo, judgeTotal, moveItem, parseNames, parseTeamsPaste } from './lib'
+import { assignmentPairs, cellState, computeKpis, formatAgo, judgeTotal, moveItem, parseNames, parseTeamsPaste, topTeamIds } from './lib'
 
 const judge = (o: Partial<JudgeSummary> = {}): JudgeSummary => ({
   id: 'j1', name: 'J', is_active: true, submitted_at: null, last_seen_at: null, pending_count: 0, scored_count: 0, ...o,
@@ -88,5 +88,21 @@ describe('assignments', () => {
     const judges = [{ id: 'j' }]
     expect(assignmentPairs(judges, teams, new Set(['j:t1', 'j:t2']))).toEqual([])
     expect(assignmentPairs(judges, teams, new Set(['j:t2']))).toEqual([{ judge_id: 'j', team_id: 't2' }])
+  })
+})
+
+describe('topTeamIds', () => {
+  const row = (team_id: string, rank: number | null) => ({ team_id, rank }) as Parameters<typeof topTeamIds>[0][number]
+  it('takes the top n of every track group, ties included, unranked never', () => {
+    const rows = [row('a1', 1), row('a2', 2), row('a3', 2), row('a4', 4), row('b1', 1), row('b2', 2), row('u', null)]
+    expect(topTeamIds(rows, 2)).toEqual(['a1', 'a2', 'a3', 'b1', 'b2'])
+    expect(topTeamIds(rows, 1)).toEqual(['a1', 'b1'])
+  })
+})
+
+describe('pairwise monitoring', () => {
+  it('treats a submitted pairwise sheet as complete without a total', () => {
+    expect(cellState(judge({ submitted_at: 1 }), 4, 0, true)).toBe('submitted')
+    expect(cellState(judge({ submitted_at: 1 }), 4, 0)).toBe('partial')
   })
 })

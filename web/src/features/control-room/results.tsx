@@ -1,22 +1,27 @@
 import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Download } from 'lucide-react'
+import { ChevronDown, ChevronRight, Download, Info, Layers } from 'lucide-react'
 import { eventsApi } from '@/api/endpoints'
 import type { Criterion, RankingMode, RankingRow, Track } from '@/api/types'
 import { EmptyState, ErrorState } from '@/components/state-views'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cr } from '@/i18n/control-room'
 import { errorText } from '@/lib/errors'
 import { formatDateTime, formatX100 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { criteriaOfGroup, groupByTrack } from '@/lib/tracks'
+import { RECORD_COLUMNS } from '@/lib/ranking'
 import { useFull } from './context'
+import { NextRoundDialog } from './next-round'
 
 export function Results() {
   const { event, criteria } = useFull()
+  const pairwise = event.scoring_mode === 'pairwise'
+  const [nextOpen, setNextOpen] = useState(false)
   const settled = event.status === 'finalized' || event.status === 'published'
   const [picked, setPicked] = useState<RankingMode | null>(null)
   const mode = picked ?? (settled ? 'official' : 'provisional')
@@ -53,13 +58,22 @@ export function Results() {
             </button>
           ))}
         </div>
-        <Button variant="outline" asChild>
-          <a href={eventsApi.exportCsvUrl(event.id)} download>
-            <Download />
-            {cr.results.export}
-          </a>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {settled && (
+            <Button onClick={() => setNextOpen(true)}>
+              <Layers />
+              {cr.results.nextRound}
+            </Button>
+          )}
+          <Button variant="outline" asChild>
+            <a href={eventsApi.exportCsvUrl(event.id)} download>
+              <Download />
+              {cr.results.export}
+            </a>
+          </Button>
+        </div>
       </div>
+      {nextOpen && <NextRoundDialog onClose={() => setNextOpen(false)} />}
       <p className="text-sm text-muted-foreground">
         {mode === 'official' ? cr.results.modeHelpOfficial : cr.results.modeHelpProvisional}{' '}
         {results.data?.snapshot && mode === 'official' && cr.results.snapshot(formatDateTime(results.data.snapshot.created_at))}
@@ -73,11 +87,12 @@ export function Results() {
           {groups.map((g) => (
             <section key={g.track?.id ?? 'none'} aria-label={heading(g.track)} className="grid gap-2">
               {tracks.length > 0 && <h2 className="text-base font-semibold">{heading(g.track)}</h2>}
-              <ResultsTable rows={g.rows} criteria={criteriaOfGroup(criteria, g.track)} open={open} toggle={toggle} />
+              <ResultsTable rows={g.rows} criteria={pairwise ? [] : criteriaOfGroup(criteria, g.track)} pairwise={pairwise} open={open} toggle={toggle} />
             </section>
           ))}
           <p className="text-xs text-muted-foreground">
-            {cr.results.quorumNote(results.data.quorum)} {tracks.length > 0 && cr.results.trackNote} {cr.results.tiesNote}
+            {cr.results.quorumNote(results.data.quorum)} {tracks.length > 0 && cr.results.trackNote} {cr.results.tiesNote}{' '}
+            {results.data.rows.some((r) => r.raw_score_x100 != null) && cr.results.normalizedNote}
           </p>
         </>
       )}
@@ -85,7 +100,22 @@ export function Results() {
   )
 }
 
-function ResultsTable({ rows, criteria, open, toggle }: { rows: RankingRow[]; criteria: Criterion[]; open: Set<string>; toggle: (id: string) => void }) {
+function InfoTip({ label, text }: { label: string; text: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" aria-label={`${label}: ${text}`} className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50">
+          <Info className="size-3.5" aria-hidden />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-72 text-pretty">{text}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function ResultsTable({ rows, criteria, pairwise, open, toggle }: { rows: RankingRow[]; criteria: Criterion[]; pairwise: boolean; open: Set<string>; toggle: (id: string) => void }) {
+  const normalized = rows.some((r) => r.raw_score_x100 != null)
+  const extra = pairwise ? RECORD_COLUMNS.length : criteria.length
   return (
     <div className="rounded-xl border bg-card">
       <Table>
@@ -94,8 +124,20 @@ function ResultsTable({ rows, criteria, open, toggle }: { rows: RankingRow[]; cr
             <TableHead className="w-10" />
             <TableHead className="w-16">{cr.results.rank}</TableHead>
             <TableHead>{cr.results.team}</TableHead>
-            <TableHead className="text-right">{cr.results.score}</TableHead>
-            <TableHead className="text-right">{cr.results.sheets}</TableHead>
+            <TableHead className="text-right">
+              <span className="inline-flex items-center justify-end gap-1">
+                {pairwise ? cr.results.pairwiseScore : cr.results.score}
+                {pairwise && <InfoTip label={cr.results.pairwiseScore} text={cr.results.pairwiseScoreHint} />}
+                {normalized && <InfoTip label={cr.results.rawScore} text={cr.results.rawScoreHint} />}
+              </span>
+            </TableHead>
+            <TableHead className="text-right">{pairwise ? cr.results.comparisons : cr.results.sheets}</TableHead>
+            {pairwise &&
+              RECORD_COLUMNS.map((c) => (
+                <TableHead key={c.key} className="text-right">
+                  {c.label}
+                </TableHead>
+              ))}
             {criteria.map((c) => (
               <TableHead key={c.id} className="hidden text-right xl:table-cell">
                 <span className="ml-auto block max-w-24 truncate" title={c.name}>
@@ -135,8 +177,21 @@ function ResultsTable({ rows, criteria, open, toggle }: { rows: RankingRow[]; cr
                       )}
                     </span>
                   </TableCell>
-                  <TableCell className="num text-right font-mono text-base font-medium">{formatX100(row.score_x100)}</TableCell>
+                  <TableCell className="num text-right font-mono text-base font-medium">
+                    {formatX100(row.score_x100)}
+                    {row.raw_score_x100 != null && (
+                      <span className="block text-xs font-normal text-muted-foreground" title={cr.results.rawScoreHint}>
+                        {cr.results.rawScore}: {formatX100(row.raw_score_x100)}
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell className="num text-right font-mono">{row.sheets}</TableCell>
+                  {pairwise &&
+                    RECORD_COLUMNS.map((c) => (
+                      <TableCell key={c.key} className="num text-right font-mono">
+                        {row[c.key] ?? 0}
+                      </TableCell>
+                    ))}
                   {criteria.map((c) => (
                     <TableCell key={c.id} className="num hidden text-right font-mono xl:table-cell">
                       {formatX100(row.criteria.find((a) => a.criterion_id === c.id)?.avg_x100)}
@@ -146,10 +201,10 @@ function ResultsTable({ rows, criteria, open, toggle }: { rows: RankingRow[]; cr
                 {expanded && (
                   <TableRow className="bg-muted/40 hover:bg-muted/40">
                     <TableCell />
-                    <TableCell colSpan={4 + criteria.length} className="whitespace-normal">
+                    <TableCell colSpan={4 + extra} className="whitespace-normal">
                       <div className="grid gap-4 py-1 sm:grid-cols-2">
-                        <Breakdown title={cr.results.byCriteria} empty={cr.results.noJudges} items={criteria.map((c) => ({ key: c.id, label: c.name, value: row.criteria.find((a) => a.criterion_id === c.id)?.avg_x100 ?? null }))} />
-                        <Breakdown title={cr.results.byJudges} empty={cr.results.noJudges} items={row.judges.map((j) => ({ key: j.judge_id, label: j.judge_name, value: j.score_x100 }))} />
+                        {!pairwise && <Breakdown title={cr.results.byCriteria} empty={cr.results.noJudges} items={criteria.map((c) => ({ key: c.id, label: c.name, value: row.criteria.find((a) => a.criterion_id === c.id)?.avg_x100 ?? null }))} />}
+                        <Breakdown title={pairwise ? cr.results.byJudgesPairwise : cr.results.byJudges} empty={cr.results.noJudges} items={row.judges.map((j) => ({ key: j.judge_id, label: j.judge_name, value: j.score_x100 }))} />
                       </div>
                     </TableCell>
                   </TableRow>

@@ -113,8 +113,13 @@ export const ru = {
     judges: 'Судей',
     submitted: 'Сдали листы',
     noDate: 'Дата не указана',
+    round: (n: number) => `Раунд ${n}`,
+    rounds: (n: number) => `Раундов: ${n}`,
+    showRounds: (n: number) => `Показать следующие раунды (${n})`,
+    hideRounds: 'Скрыть следующие раунды',
     loadFailed: 'Не удалось загрузить мероприятия',
   },
+  ranking: { wins: 'Победы', ties: 'Ничьи', losses: 'Поражения' },
   admins: {
     title: 'Администраторы',
     subtitle: 'Люди, которые могут создавать мероприятия и управлять ими.',

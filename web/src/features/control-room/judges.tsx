@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useQuery } from '@tanstack/react-query'
 import { MoreHorizontal, Printer } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { eventsApi } from '@/api/endpoints'
 import type { JudgeSummary, JudgeWithLink } from '@/api/types'
 import { CopyField } from '@/components/copy-field'
@@ -17,7 +19,7 @@ import { cr } from '@/i18n/control-room'
 import { ru } from '@/i18n/ru'
 import { errorText } from '@/lib/errors'
 import { ConfirmDialog } from './confirm-dialog'
-import { useEventMutation, useFull, useNow } from './context'
+import { useAssignmentsOn, useEventMutation, useFull, useNow } from './context'
 import { Distribution } from './distribution'
 import { formatAgo, judgeTotal, parseNames } from './lib'
 import { SheetImport } from './sheet-import'
@@ -27,9 +29,18 @@ type Action = { kind: 'rename' | 'rotate' | 'reopen' | 'delete'; judge: JudgeSum
 
 export function JudgesSection() {
   const { event, judges, teams, criteria, assignments, conflicts } = useFull()
+  const pairwise = event.scoring_mode === 'pairwise'
+  // The judge summary counts rubric scores only; pairwise progress comes from the matrix
+  // (a decided comparison is counted once for each of its two teams).
+  const matrix = useQuery({ queryKey: ['cr', event.id, 'matrix'], queryFn: () => eventsApi.matrix(event.id), enabled: pairwise })
+  const decidedBy = (judgeId: string) => Math.round((matrix.data?.cells.filter((c) => c.judge_id === judgeId).reduce((n, c) => n + c.scored, 0) ?? 0) / 2)
   const frozen = event.status === 'finalized' || event.status === 'published'
-  const [links, setLinks] = useState<JudgeWithLink[] | null>(null)
+  const location = useLocation()
+  const navigate = useNavigate()
+  // A freshly created round hands over its judge links through the router state (shown once).
+  const [links, setLinks] = useState<JudgeWithLink[] | null>(() => (location.state as { links?: JudgeWithLink[] } | null)?.links ?? null)
   const [action, setAction] = useState<Action | null>(null)
+  const assignmentsOn = useAssignmentsOn()
   const assigned = pairSet(assignments)
   const conflictSet = pairSet(conflicts)
   const now = useNow()
@@ -52,7 +63,7 @@ export function JudgesSection() {
         ) : (
           <ul className="divide-y rounded-xl border bg-card">
             {judges.map((j) => {
-              const total = judgeTotal(j.id, teams, criteria, assigned, conflictSet)
+              const total = judgeTotal(j.id, teams, criteria, assigned, conflictSet, assignmentsOn)
               return (
               <li key={j.id} className="flex items-center gap-3 p-3 pl-4">
                 <div className="min-w-0 flex-1">
@@ -60,9 +71,12 @@ export function JudgesSection() {
                     <p className="max-w-full truncate font-medium" title={j.name}>
                       {j.name}
                     </p>
-                    <JudgeStatus judge={j} />
+                    <JudgeStatus judge={j} started={pairwise ? decidedBy(j.id) > 0 : j.scored_count > 0} />
                     {j.pending_count > 0 && <Badge variant="destructive">{cr.overview.pending(j.pending_count)}</Badge>}
                   </div>
+                  {pairwise ? (
+                    <p className="num mt-1.5 font-mono text-xs text-muted-foreground">{cr.judges.progressPairwise(decidedBy(j.id))}</p>
+                  ) : (
                   <div className="mt-1.5 flex items-center gap-3">
                     <div
                       role="progressbar"
@@ -76,6 +90,7 @@ export function JudgesSection() {
                     </div>
                     <span className="num font-mono text-xs text-muted-foreground">{cr.judges.progress(j.scored_count, total)}</span>
                   </div>
+                  )}
                   <p className="mt-1 text-xs text-muted-foreground">
                     {cr.judges.lastSeen}: {j.last_seen_at == null ? cr.overview.neverSeen : formatAgo(j.last_seen_at, now)}
                   </p>
@@ -104,17 +119,20 @@ export function JudgesSection() {
         )}
       </section>
       <Distribution />
-      <SheetImport />
-      {links && <LinksDialog links={links} onClose={() => setLinks(null)} />}
+      {!pairwise && <SheetImport />}
+      {links && <LinksDialog title={event.title} links={links} onClose={() => {
+          setLinks(null)
+          if (location.state) navigate(location.pathname, { replace: true, state: null })
+        }} />}
       {action && <JudgeActionDialog action={action} onClose={() => setAction(null)} onLink={(l) => setLinks([l])} />}
     </div>
   )
 }
 
-function JudgeStatus({ judge }: { judge: JudgeSummary }) {
+function JudgeStatus({ judge, started }: { judge: JudgeSummary; started: boolean }) {
   if (!judge.is_active) return <Badge variant="secondary">{cr.judges.status.inactive}</Badge>
   if (judge.submitted_at != null) return <Badge variant="success">{cr.judges.status.submitted}</Badge>
-  if (judge.scored_count > 0) return <Badge variant="warning">{cr.judges.status.progress}</Badge>
+  if (started) return <Badge variant="warning">{cr.judges.status.progress}</Badge>
   return <Badge variant="outline">{cr.judges.status.none}</Badge>
 }
 
@@ -154,8 +172,7 @@ function AddJudges({ disabled, onCreated }: { disabled: boolean; onCreated: (l: 
   )
 }
 
-function LinksDialog({ links, onClose }: { links: JudgeWithLink[]; onClose: () => void }) {
-  const { event } = useFull()
+export function LinksDialog({ title, links, onClose }: { title: string; links: JudgeWithLink[]; onClose: () => void }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
@@ -181,7 +198,7 @@ function LinksDialog({ links, onClose }: { links: JudgeWithLink[]; onClose: () =
           </Button>
           <Button onClick={onClose}>{cr.judges.done}</Button>
         </DialogFooter>
-        <PrintSheet title={event.title} links={links} />
+        <PrintSheet title={title} links={links} />
       </DialogContent>
     </Dialog>
   )

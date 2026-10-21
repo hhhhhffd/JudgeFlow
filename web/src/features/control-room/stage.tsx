@@ -35,6 +35,8 @@ export function StageTab() {
   const reveal = useEventMutation((action: StageAction) => eventsApi.revealStage(event.id, action))
   const update = useEventMutation((body: { stage_view?: StageView; stage_top_n?: number; stage_track_id?: string | null }) => eventsApi.update(event.id, body))
 
+  const shownTrackId = state.data ? (state.data.stage.track_id ?? undefined) : (event.stage_track_id ?? tracks[0]?.id)
+
   const canNext = available && revealed < total && !reveal.isPending
   const canPrev = available && revealed > 0 && !reveal.isPending
   const run = (action: StageAction) => reveal.mutate(action)
@@ -126,8 +128,8 @@ export function StageTab() {
               {tracks.length > 0 && (
                 <div className="grid gap-2">
                   <p id="stage-track-l" className="text-sm font-medium">{t.trackLabel}</p>
-                  {/* null on the server means the first group, so the first track is the visible default. */}
-                  <Select value={event.stage_track_id ?? tracks[0]!.id} onValueChange={(v) => update.mutate({ stage_track_id: v })} disabled={update.isPending}>
+                  {/* The server reports the effective track (null selection = the first group); the first track is only a guess until it answers. */}
+                  <Select value={shownTrackId} onValueChange={(v) => update.mutate({ stage_track_id: v })} disabled={update.isPending}>
                     <SelectTrigger aria-labelledby="stage-track-l" className="w-full sm:w-64">
                       <SelectValue />
                     </SelectTrigger>

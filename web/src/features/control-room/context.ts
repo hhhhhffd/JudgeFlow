@@ -27,6 +27,12 @@ export function useEventMutation<V, R>(mutationFn: (v: V) => Promise<R>, success
   })
 }
 
+/** Assignments are in force: the server flag when present, else any assignment row (SPEC §12). */
+export function useAssignmentsOn() {
+  const { event, assignments } = useFull()
+  return event.assignments_enabled ?? assignments.length > 0
+}
+
 /** Only drafts allow composition changes (SPEC §4). */
 export function useIsDraft() {
   return useFull().event.status === 'draft'

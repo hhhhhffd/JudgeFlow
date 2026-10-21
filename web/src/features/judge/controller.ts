@@ -256,7 +256,8 @@ export class DeskController {
         const session = await judgeApi.session(this.token)
         await this.adoptOrphans(session)
         const prev = this.state.rows
-        const rows = pruneOutsideSheet(mergeServer(prev, session.scores), session.teams, session.criteria)
+        // Pairwise sessions carry no criteria or scores.
+        const rows = pruneOutsideSheet(mergeServer(prev, session.scores ?? []), session.teams, session.criteria ?? [])
         const prevComparisons = this.state.comparisons
         const comparisons = session.comparisons ? mergeComparisons(prevComparisons, session.comparisons) : prevComparisons
         this.set({ session, rows, comparisons, phase: 'ready', fromCache: false, failure: null })

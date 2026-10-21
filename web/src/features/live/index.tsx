@@ -4,18 +4,21 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Hourglass, WifiOff } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { ApiError, openStream, publicApi } from '@/api'
-import type { PublicEvent, PublicRanking, PublicRankingRow } from '@/api/types'
+import type { ChangeKind, PublicEvent, PublicRanking, PublicRankingRow } from '@/api/types'
 import { ErrorState } from '@/components/state-views'
 import { Skeleton } from '@/components/ui/skeleton'
 import { liveText } from '@/i18n/judge'
 import { formatX100 } from '@/lib/format'
 import { errorText } from '@/lib/errors'
+import { boardColumns } from '@/lib/ranking'
 import { criteriaOfGroup, groupByTrack } from '@/lib/tracks'
 import { cn } from '@/lib/utils'
 import { Backdrop } from './backdrop'
 
 const REFETCH_DEBOUNCE_MS = 500
 const PROBE_MS = 30_000
+
+const LIVE_KINDS: readonly ChangeKind[] = ['scores', 'status', 'event', 'composition', 'stage']
 
 export default function LiveBoard() {
   const { eventId = '' } = useParams()
@@ -34,7 +37,9 @@ export default function LiveBoard() {
     if (!hasData) return
     let timer: number | undefined
     const stop = openStream(publicApi.streamUrl(eventId), {
-      onChange: () => {
+      onChange: (kind) => {
+        // presence/judges/alert hints never change the public board.
+        if (!LIVE_KINDS.includes(kind)) return
         window.clearTimeout(timer)
         timer = window.setTimeout(() => void client.invalidateQueries({ queryKey: ['public-event', eventId] }), REFETCH_DEBOUNCE_MS)
       },
@@ -145,7 +150,7 @@ function Board({ event, results }: { event: PublicEvent; results: PublicRanking 
 
 function GroupBoard({ event, rows, quorum, criteria }: { event: PublicEvent; rows: PublicRankingRow[]; quorum: number; criteria: NonNullable<PublicEvent['criteria']> }) {
   const podium = rows.filter((r) => r.rank !== null).slice(0, 3)
-  const showCriteria = criteria.length > 0 && rows.some((r) => r.criteria.length > 0)
+  const columns = boardColumns(rows, criteria)
   const teamsHeading = event.teams_label_enabled && event.teams_label?.trim() ? event.teams_label.trim() : liveText.table.team
 
   return (
@@ -169,12 +174,11 @@ function GroupBoard({ event, rows, quorum, criteria }: { event: PublicEvent; row
                 <th scope="col" className="px-4 py-3 font-medium">
                   {teamsHeading}
                 </th>
-                {showCriteria &&
-                  criteria.map((c) => (
-                    <th key={c.id} scope="col" className="hidden px-4 py-3 text-right font-medium md:table-cell">
-                      {c.name}
-                    </th>
-                  ))}
+                {columns.map((c) => (
+                  <th key={c.key} scope="col" className="hidden px-4 py-3 text-right font-medium md:table-cell">
+                    {c.label}
+                  </th>
+                ))}
                 <th scope="col" className="px-4 py-3 text-right font-medium lg:px-6">
                   {liveText.table.score}
                 </th>
@@ -190,12 +194,11 @@ function GroupBoard({ event, rows, quorum, criteria }: { event: PublicEvent; row
                     <p className="text-xl font-medium lg:text-3xl">{row.team_name}</p>
                     <RowNote row={row} quorum={quorum} />
                   </td>
-                  {showCriteria &&
-                    criteria.map((c) => (
-                      <td key={c.id} className="num hidden px-4 py-4 text-right text-lg text-muted-foreground md:table-cell lg:text-2xl">
-                        {formatX100(row.criteria.find((x) => x.criterion_id === c.id)?.avg_x100)}
-                      </td>
-                    ))}
+                  {columns.map((c) => (
+                    <td key={c.key} className="num hidden px-4 py-4 text-right text-lg text-muted-foreground md:table-cell lg:text-2xl">
+                      {c.value(row)}
+                    </td>
+                  ))}
                   <td className="num px-4 py-4 text-right font-mono text-2xl font-semibold lg:px-6 lg:text-5xl">{formatX100(row.score_x100)}</td>
                 </tr>
               ))}
