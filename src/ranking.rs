@@ -27,6 +27,15 @@ pub struct Input {
     /// Scores referencing unknown teams, criteria or judges are ignored.
     pub scores: Vec<ScoreInput>,
     pub quorum: u32,
+    pub normalization: Normalization,
+}
+
+/// Per-judge leniency correction (SPEC section 13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Normalization {
+    None,
+    /// Shifts each judge's sheets so that the judge's mean equals the mean of all included sheets.
+    Center,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +73,9 @@ pub struct Row {
     pub tie: bool,
     pub team_id: String,
     pub score_x100: Option<i64>,
+    /// Score without normalization; set only when normalization is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_score_x100: Option<i64>,
     pub sheets: u32,
     pub meets_quorum: bool,
     pub criteria: Vec<CriterionAvg>,
@@ -92,6 +104,46 @@ struct Scored {
     exact: Option<BigRational>,
 }
 
+/// Included sheets of one team, before ranking.
+struct TeamSheets {
+    judge_scores: Vec<JudgeScore>,
+    /// Exact judge scores, parallel to `judge_scores`.
+    exact_scores: Vec<BigRational>,
+    value_sums: Vec<i64>,
+}
+
+/// `offset_j` = mean of judge `j`'s included sheets minus the mean of all included sheets.
+/// The offsets are weighted by sheet count, so subtracting them keeps the overall mean unchanged.
+fn judge_offsets(teams: &[TeamSheets]) -> HashMap<String, BigRational> {
+    let mut per_judge: HashMap<&str, (BigRational, i64)> = HashMap::new();
+    let mut total = BigRational::from_integer(BigInt::from(0));
+    let mut count = 0i64;
+    for team in teams {
+        for (js, exact) in team.judge_scores.iter().zip(&team.exact_scores) {
+            let entry = per_judge
+                .entry(js.judge_id.as_str())
+                .or_insert_with(|| (BigRational::from_integer(BigInt::from(0)), 0));
+            entry.0 += exact;
+            entry.1 += 1;
+            total += exact;
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return HashMap::new();
+    }
+    let overall = total / BigRational::from_integer(BigInt::from(count));
+    per_judge
+        .into_iter()
+        .map(|(judge, (sum, n))| {
+            (
+                judge.to_string(),
+                sum / BigRational::from_integer(BigInt::from(n)) - &overall,
+            )
+        })
+        .collect()
+}
+
 /// Computes the ranking of `input.teams` according to `mode`.
 ///
 /// Output rows are ordered: ranked teams (best first, ties in team order),
@@ -114,13 +166,16 @@ pub fn compute(input: &Input, mode: Mode) -> Ranking {
 
     let weight_sum: i64 = input.criteria.iter().map(|c| c.weight).sum();
 
-    let mut scored: Vec<Scored> = input
+    // Pass 1: every team's included sheets with exact judge scores.
+    let sheets_by_team: Vec<TeamSheets> = input
         .teams
         .iter()
         .map(|team_id| {
-            let mut judge_scores = Vec::new();
-            let mut exact_scores = Vec::new();
-            let mut value_sums = vec![0i64; input.criteria.len()];
+            let mut sheets = TeamSheets {
+                judge_scores: Vec::new(),
+                exact_scores: Vec::new(),
+                value_sums: vec![0i64; input.criteria.len()],
+            };
 
             for judge in input
                 .judges
@@ -151,28 +206,58 @@ pub fn compute(input: &Input, mode: Mode) -> Ranking {
                 let judge_score = weighted * BigRational::from_integer(BigInt::from(100))
                     / BigRational::from_integer(BigInt::from(weight_sum));
 
-                for (sum, v) in value_sums.iter_mut().zip(&values) {
+                for (sum, v) in sheets.value_sums.iter_mut().zip(&values) {
                     *sum += v;
                 }
-                judge_scores.push(JudgeScore {
+                sheets.judge_scores.push(JudgeScore {
                     judge_id: judge.id.clone(),
                     score_x100: to_hundredths(&judge_score),
                 });
-                exact_scores.push(judge_score);
+                sheets.exact_scores.push(judge_score);
             }
+            sheets
+        })
+        .collect();
 
-            let sheets = exact_scores.len() as u32;
-            let exact = (sheets > 0).then(|| {
-                let total: BigRational = exact_scores.into_iter().sum();
-                total / BigRational::from_integer(BigInt::from(sheets))
-            });
+    let offsets = match input.normalization {
+        Normalization::None => HashMap::new(),
+        Normalization::Center => judge_offsets(&sheets_by_team),
+    };
+    let normalized = input.normalization == Normalization::Center;
+
+    // Pass 2: team scores (from normalized sheets when centering), rows.
+    let mut scored: Vec<Scored> = input
+        .teams
+        .iter()
+        .zip(sheets_by_team)
+        .map(|(team_id, sheets)| {
+            let count = sheets.exact_scores.len() as u32;
+            let mean = |values: Vec<BigRational>| {
+                (count > 0).then(|| {
+                    values.into_iter().sum::<BigRational>()
+                        / BigRational::from_integer(BigInt::from(count))
+                })
+            };
+            let raw = mean(sheets.exact_scores.clone());
+            let exact = if normalized {
+                mean(
+                    sheets
+                        .judge_scores
+                        .iter()
+                        .zip(&sheets.exact_scores)
+                        .map(|(js, j)| j - &offsets[&js.judge_id])
+                        .collect(),
+                )
+            } else {
+                raw.clone()
+            };
             let criteria = input
                 .criteria
                 .iter()
-                .zip(&value_sums)
+                .zip(&sheets.value_sums)
                 .map(|(c, &sum)| CriterionAvg {
                     criterion_id: c.id.clone(),
-                    avg_x100: (sheets > 0).then(|| round_half_up(&ratio(sum, i64::from(sheets)))),
+                    avg_x100: (count > 0).then(|| round_half_up(&ratio(sum, i64::from(count)))),
                 })
                 .collect();
 
@@ -182,10 +267,11 @@ pub fn compute(input: &Input, mode: Mode) -> Ranking {
                     tie: false,
                     team_id: team_id.clone(),
                     score_x100: exact.as_ref().map(to_hundredths),
-                    sheets,
-                    meets_quorum: sheets >= input.quorum,
+                    raw_score_x100: raw.as_ref().filter(|_| normalized).map(to_hundredths),
+                    sheets: count,
+                    meets_quorum: count >= input.quorum,
                     criteria,
-                    judges: judge_scores,
+                    judges: sheets.judge_scores,
                     track_id: None,
                 },
                 exact,
@@ -336,6 +422,7 @@ mod tests {
             judges,
             scores,
             quorum: 1,
+            normalization: Normalization::None,
         }
     }
 
@@ -692,5 +779,105 @@ mod tests {
             [false; 2]
         );
         assert_eq!(stage_slice(&[], "podium", 3, 0).total_groups, 0);
+    }
+
+    fn centered(mut i: Input) -> Input {
+        i.normalization = Normalization::Center;
+        i
+    }
+
+    #[test]
+    fn centering_flips_order_of_lenient_and_strict_judges() {
+        // Lenient judge L gave 8.0 / 9.0 to a / c, strict judge S gave 7.0 / 5.0 to b / d.
+        // Raw: a (80) beats b (70). L's mean is 85, S's is 60, the overall mean 72.5, so the
+        // offsets are +12.5 and -12.5: a' = 67.5, b' = 82.5 and b wins after centering.
+        //
+        // Distortion to keep in mind: the judges saw DISJOINT subsets of teams, so the offset
+        // cannot tell a lenient judge from a judge who happened to see stronger teams. Centering
+        // assumes judges see comparable subsets; the UI warns about it.
+        let i = input(
+            &["a", "b", "c", "d"],
+            vec![criterion("c", 1000, 1)],
+            vec![judge("l", true, true), judge("s", true, true)],
+            vec![
+                score("l", "a", "c", 800),
+                score("l", "c", "c", 900),
+                score("s", "b", "c", 700),
+                score("s", "d", "c", 500),
+            ],
+        );
+        let raw = compute(&i, Mode::Official);
+        assert_eq!(raw.rows[0].team_id, "c");
+        assert_eq!(raw.rows[1].team_id, "a");
+        assert_eq!(raw.rows[0].raw_score_x100, None);
+
+        let r = compute(&centered(i), Mode::Official);
+        let order: Vec<_> = r.rows.iter().map(|row| row.team_id.as_str()).collect();
+        assert_eq!(order, ["b", "c", "a", "d"]);
+        let by_team = |t: &str| r.rows.iter().find(|row| row.team_id == t).unwrap();
+        assert_eq!(by_team("a").score_x100, Some(6750));
+        assert_eq!(by_team("a").raw_score_x100, Some(8000));
+        assert_eq!(by_team("b").score_x100, Some(8250));
+        assert_eq!(by_team("b").raw_score_x100, Some(7000));
+        // Per-judge scores stay raw.
+        assert_eq!(by_team("b").judges[0].score_x100, 7000);
+    }
+
+    #[test]
+    fn centering_with_one_judge_equals_raw() {
+        let i = input(
+            &["a", "b"],
+            vec![criterion("c", 1000, 1)],
+            vec![judge("j", true, true)],
+            vec![score("j", "a", "c", 900), score("j", "b", "c", 300)],
+        );
+        let raw = compute(&i, Mode::Official);
+        let r = compute(&centered(i), Mode::Official);
+        for (c, n) in raw.rows.iter().zip(&r.rows) {
+            assert_eq!(
+                (c.team_id.as_str(), c.rank, c.score_x100),
+                (n.team_id.as_str(), n.rank, n.score_x100)
+            );
+            assert_eq!(n.raw_score_x100, c.score_x100);
+        }
+    }
+
+    #[test]
+    fn centering_keeps_order_when_all_judges_see_all_teams() {
+        // Same subsets: every judge's offset is a constant shift for every team.
+        let i = input(
+            &["a", "b"],
+            vec![criterion("c", 1000, 1)],
+            vec![judge("l", true, true), judge("s", true, true)],
+            vec![
+                score("l", "a", "c", 900),
+                score("l", "b", "c", 800),
+                score("s", "a", "c", 500),
+                score("s", "b", "c", 300),
+            ],
+        );
+        let r = compute(&centered(i), Mode::Official);
+        // a: (90 + 50) / 2, b: (80 + 30) / 2; the offsets cancel in the mean.
+        assert_eq!(r.rows[0].team_id, "a");
+        assert_eq!(r.rows[0].score_x100, Some(7000));
+        assert_eq!(r.rows[1].score_x100, Some(5500));
+    }
+
+    #[test]
+    fn centering_uses_only_included_sheets() {
+        // Provisional vs official: the unsubmitted judge does not shift the official offsets.
+        let i = input(
+            &["a", "b"],
+            vec![criterion("c", 1000, 1)],
+            vec![judge("x", true, true), judge("y", true, false)],
+            vec![
+                score("x", "a", "c", 800),
+                score("x", "b", "c", 600),
+                score("y", "a", "c", 100),
+            ],
+        );
+        let r = compute(&centered(i), Mode::Official);
+        assert_eq!(r.rows[0].score_x100, Some(8000));
+        assert_eq!(r.rows[0].sheets, 1);
     }
 }

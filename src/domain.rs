@@ -41,6 +41,9 @@ pub struct Event {
     pub stage_top_n: i64,
     pub stage_revealed: i64,
     pub stage_track_id: Option<String>,
+    pub parent_event_id: Option<String>,
+    pub round: i64,
+    pub normalization: String,
     pub locked_at: Option<i64>,
     #[serde(skip)]
     pub created_by: Option<String>,
@@ -509,6 +512,11 @@ pub async fn ranking_inputs(
                 judges: judge_inputs.clone(),
                 scores,
                 quorum,
+                normalization: if event.normalization == "center" {
+                    ranking::Normalization::Center
+                } else {
+                    ranking::Normalization::None
+                },
             };
             (track_id, input)
         })

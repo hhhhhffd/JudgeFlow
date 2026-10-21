@@ -65,6 +65,8 @@ struct EventListItem {
     criteria_count: i64,
     judges_count: i64,
     submitted_count: i64,
+    parent_event_id: Option<String>,
+    round: i64,
     created_at: i64,
 }
 
@@ -78,7 +80,7 @@ async fn list(
          (SELECT COUNT(*) FROM criteria c WHERE c.event_id = e.id) AS criteria_count, \
          (SELECT COUNT(*) FROM judges j WHERE j.event_id = e.id) AS judges_count, \
          (SELECT COUNT(*) FROM judges j WHERE j.event_id = e.id AND j.submitted_at IS NOT NULL) AS submitted_count, \
-         e.created_at FROM events e ORDER BY e.created_at DESC, e.rowid DESC",
+         e.parent_event_id, e.round, e.created_at FROM events e ORDER BY e.created_at DESC, e.rowid DESC",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -157,6 +159,7 @@ struct PatchRequest {
     #[serde(default, deserialize_with = "double_option")]
     location: Option<Option<String>>,
     scoring_mode: Option<String>,
+    normalization: Option<String>,
     notes_enabled: Option<bool>,
     visibility: Option<String>,
     quorum: Option<i64>,
@@ -216,15 +219,40 @@ async fn patch(
         changed.push("location");
     }
     if let Some(mode) = &req.scoring_mode {
-        if !matches!(mode.as_str(), "team" | "criterion") {
+        if !matches!(mode.as_str(), "team" | "criterion" | "pairwise") {
             return Err(AppError::Validation(
-                "Режим оценки: team или criterion".into(),
+                "Режим оценки: team, criterion или pairwise".into(),
             ));
         }
         if *mode != current.scoring_mode {
             domain::draft_only(&current)?;
             event.scoring_mode = mode.clone();
             changed.push("scoring_mode");
+            if mode == "pairwise" {
+                // Normalization applies to rubric scores only.
+                event.normalization = "none".into();
+            }
+        }
+    }
+    if let Some(normalization) = &req.normalization {
+        if !matches!(normalization.as_str(), "none" | "center") {
+            return Err(AppError::Validation("Нормализация: none или center".into()));
+        }
+        if *normalization != event.normalization {
+            if normalization == "center" && event.scoring_mode == "pairwise" {
+                return Err(AppError::Validation(
+                    "Нормализация доступна только для оценки по критериям".into(),
+                ));
+            }
+            // Finalized results are snapshots; changing the method would not change them.
+            if domain::is_closed(&current.status) {
+                return Err(AppError::InvalidState(
+                    "Нормализацию нельзя менять после утверждения результатов".into(),
+                    None,
+                ));
+            }
+            event.normalization = normalization.clone();
+            changed.push("normalization");
         }
     }
     if let Some(notes) = req.notes_enabled
@@ -370,7 +398,7 @@ async fn patch(
 
     event.updated_at = now_ms();
     sqlx::query(
-        "UPDATE events SET title = ?, description = ?, starts_at = ?, location = ?, scoring_mode = ?, \
+        "UPDATE events SET title = ?, description = ?, starts_at = ?, location = ?, scoring_mode = ?, normalization = ?, \
          notes_enabled = ?, visibility = ?, quorum = ?, teams_label = ?, teams_label_enabled = ?, \
          criteria_label = ?, criteria_label_enabled = ?, alert_enabled = ?, alert_title = ?, \
          alert_text = ?, alert_align = ?, alert_button_text = ?, alert_version = ?, \
@@ -382,6 +410,7 @@ async fn patch(
     .bind(event.starts_at)
     .bind(&event.location)
     .bind(&event.scoring_mode)
+    .bind(&event.normalization)
     .bind(event.notes_enabled)
     .bind(&event.visibility)
     .bind(event.quorum)
@@ -483,6 +512,7 @@ async fn transition(
 
     match (from, to) {
         ("draft", "judging") => {
+            let rubric = event.scoring_mode != "pairwise";
             let counts: (i64, i64, i64) = sqlx::query_as(
                 "SELECT (SELECT COUNT(*) FROM teams WHERE event_id = ?1), \
                  (SELECT COUNT(*) FROM criteria WHERE event_id = ?1), \
@@ -492,10 +522,11 @@ async fn transition(
             .fetch_one(&mut *tx)
             .await?;
             let mut missing = Vec::new();
-            if counts.0 == 0 {
+            // Pairwise needs two teams to form a pair and uses no criteria.
+            if counts.0 < if rubric { 1 } else { 2 } {
                 missing.push("teams");
             }
-            if counts.1 == 0 {
+            if rubric && counts.1 == 0 {
                 missing.push("criteria");
             }
             if counts.2 == 0 {
@@ -503,7 +534,8 @@ async fn transition(
             }
             if !missing.is_empty() {
                 return Err(AppError::InvalidState(
-                    "Для начала оценивания нужна хотя бы одна команда, один критерий и один активный судья"
+                    "Для начала оценивания нужны команды (при попарном сравнении не меньше двух), \
+                     критерии (кроме попарного сравнения) и хотя бы один активный судья"
                         .into(),
                     Some(json!({ "missing": missing })),
                 ));

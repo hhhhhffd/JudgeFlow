@@ -332,6 +332,12 @@ comparisons(id PK, event_id FK CASCADE, judge_id FK CASCADE, team_a FK CASCADE, 
   descriptions and tracks), criteria/tracks if `copy_criteria`, judges by name with NEW tokens if `copy_judges`
   (response includes `links` like judge create). Allowed when the parent is `finalized`/`published`. Audited on both.
 - Event list items include `parent_event_id` and `round`; the UI groups rounds under the first event.
+- Details: `team_ids` must be unique teams of the parent (kept in the parent's order); `scoring_mode` is any of
+  `team|criterion|pairwise`; `copy_criteria` copies all tracks and criteria, otherwise only the tracks the selected
+  teams belong to are copied (so `track_id` stays meaningful); `copy_judges` copies active judges only. Assignments and
+  conflicts are not copied. Description, location, quorum, labels, notes and overlay settings are inherited
+  (normalization too, except for `pairwise`). Response: `{event: EventFull, links: [{judge, link}]}`; `409 invalid_state`
+  unless the parent is `finalized`/`published`. `EventFull.event` also carries `parent_event_id`, `round`, `normalization`.
 
 ### Pairwise mode (`scoring_mode = 'pairwise'`)
 - Criteria are not used (draft→judging requires ≥2 teams and ≥1 active judge, criteria optional).
@@ -360,5 +366,7 @@ comparisons(id PK, event_id FK CASCADE, judge_id FK CASCADE, team_a FK CASCADE, 
 - `events.normalization = 'center'`: removes per-judge leniency. Per ranking group: for each included judge,
   `offset_j = mean over the judge's included sheets of J − mean over all included sheets of J`;
   normalized `J' = J − offset_j`. Team score = mean of `J'`. Exact rational arithmetic like the rest of the engine.
+- `PATCH /api/events/:id {normalization}`: allowed in `draft`/`judging`/`locked`; `409 invalid_state` once `finalized`/`published`
+  (snapshots are fixed); `center` is rejected for `pairwise` events (and switching to `pairwise` resets it to `none`).
 - Rows add `raw_score_x100` (score without normalization) when normalization is on; `judges[].score_x100` stays raw.
 - UI must warn that centering can distort results when judges saw very different subsets of teams, and show both values.
