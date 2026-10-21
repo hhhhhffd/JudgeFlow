@@ -370,3 +370,21 @@ comparisons(id PK, event_id FK CASCADE, judge_id FK CASCADE, team_a FK CASCADE, 
   (snapshots are fixed); `center` is rejected for `pairwise` events (and switching to `pairwise` resets it to `none`).
 - Rows add `raw_score_x100` (score without normalization) when normalization is on; `judges[].score_x100` stays raw.
 - UI must warn that centering can distort results when judges saw very different subsets of teams, and show both values.
+
+### Pairwise backend details (implemented)
+- `POST /api/judge/pairs/reserve` `{count: 1..20}` → `{comparisons: [{id, team_a, team_b, winner: null, edited_at: null|int}]}`
+  (the judge's open pairs only, oldest first). `BEGIN IMMEDIATE`. New pairs are created only while the event is `judging` and the
+  judge has not submitted; otherwise the call is read-only. `409 invalid_state` for non-pairwise events; `400` for a bad `count`.
+  Candidate teams are the judge's covered teams per track group; `all_comparisons` = every comparison row of the event (open ones too).
+  A cleared comparison (`winner: null` with `edited_at`) stays open and is returned again.
+- `PUT /api/judge/comparisons` `{items: [{id, winner: 'a'|'b'|'tie'|null, edited_at}]}` → `{results: [{id, status: 'ok'|'stale'|'rejected', error?, server?: {winner, edited_at}}]}`.
+  Errors: `sheet_submitted`, `invalid_state` (status/grace window), `not_found` (unknown or another judge's id), `validation`.
+  Checked in that order; a fresh row (`edited_at` null) is never stale. Notifies `scores` once if anything was written.
+- `POST /api/judge/submit` in pairwise mode takes an optional JSON body `{release_open?: bool}`; open pairs → `409 invalid_state`
+  with `details.open: [ids]` unless `release_open` is true (they are then deleted). Rubric submit ignores the body.
+- Session adds `comparisons` (all of the judge's rows, decided and open) in pairwise mode only.
+- Ranking: per track group via `pairwise::compute`; only decided comparisons between two teams of the group that the judge covers
+  are used. `Row` gains optional `wins`/`losses`/`ties` (omitted in rubric mode and in old snapshots). CSV adds
+  «Побед;Поражений;Ничьих» after «Кворум» and omits criteria columns in pairwise events.
+- Matrix: `scored` = decided comparisons involving the team by that judge, `total` = 0 (no fixed total).
+- Deviation: `POST /api/events/:id/import-sheet` returns `400 validation` for pairwise events (sheet files carry scores only).
