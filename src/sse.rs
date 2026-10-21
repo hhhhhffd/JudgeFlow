@@ -44,6 +44,9 @@ const ALL_KINDS: [ChangeKind; 8] = [
 #[derive(Clone)]
 pub struct SseHub {
     channels: Arc<Mutex<HashMap<String, broadcast::Sender<ChangeKind>>>>,
+    /// Per-event counter bumped by every notification that can change public results. Caches of
+    /// derived data compare it to detect staleness (works even with no SSE subscribers).
+    versions: Arc<Mutex<HashMap<String, u64>>>,
     shutdown: watch::Sender<bool>,
 }
 
@@ -51,6 +54,7 @@ impl Default for SseHub {
     fn default() -> Self {
         Self {
             channels: Arc::default(),
+            versions: Arc::default(),
             shutdown: watch::channel(false).0,
         }
     }
@@ -59,6 +63,14 @@ impl Default for SseHub {
 impl SseHub {
     /// Tells everyone subscribed to `event_id` that something of `kind` changed.
     pub fn notify(&self, event_id: &str, kind: ChangeKind) {
+        if !matches!(kind, ChangeKind::Presence | ChangeKind::Alert) {
+            *self
+                .versions
+                .lock()
+                .expect("sse hub mutex poisoned")
+                .entry(event_id.to_string())
+                .or_default() += 1;
+        }
         let mut channels = self.channels.lock().expect("sse hub mutex poisoned");
         if let Some(sender) = channels.get(event_id) {
             // Err means nobody listens any more: drop the channel.
@@ -66,6 +78,12 @@ impl SseHub {
                 channels.remove(event_id);
             }
         }
+    }
+
+    /// Counter of result-affecting changes (everything but presence and alert) of `event_id`.
+    pub fn version(&self, event_id: &str) -> u64 {
+        let versions = self.versions.lock().expect("sse hub mutex poisoned");
+        versions.get(event_id).copied().unwrap_or(0)
     }
 
     pub fn subscribe(&self, event_id: &str) -> broadcast::Receiver<ChangeKind> {

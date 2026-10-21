@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -7,6 +8,10 @@ use crate::crypto::{self, Crypto};
 use crate::rate_limit::RateLimiter;
 use crate::sse::SseHub;
 
+/// Public results JSON per event id, tagged with the `SseHub::version` it was computed at.
+pub type PublicResultsCache =
+    Arc<tokio::sync::Mutex<HashMap<String, (u64, Option<serde_json::Value>)>>>;
+
 /// Shared application state; cheap to clone.
 #[derive(Clone)]
 pub struct AppState {
@@ -15,6 +20,7 @@ pub struct AppState {
     pub crypto: Crypto,
     pub sse: SseHub,
     pub rate_limiter: RateLimiter,
+    pub public_results: PublicResultsCache,
     /// Random password for `/api/setup/first-start/begin`; only valid while no admin exists.
     pub setup_password: Arc<str>,
 }
@@ -27,6 +33,7 @@ impl AppState {
             crypto,
             sse: SseHub::default(),
             rate_limiter: RateLimiter::default(),
+            public_results: Arc::default(),
             setup_password: crypto::random_token().into(),
         }
     }

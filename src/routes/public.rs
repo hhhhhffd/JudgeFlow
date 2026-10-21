@@ -8,6 +8,7 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use serde_json::{Value, json};
+use sqlx::SqliteConnection;
 
 use crate::domain::{self, Event, load_criteria, load_event};
 use crate::error::{AppError, AppResult};
@@ -33,31 +34,50 @@ async fn load_public(conn: &mut sqlx::SqliteConnection, id: &str) -> AppResult<E
     Ok(event)
 }
 
-async fn public_event(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> AppResult<Json<Value>> {
-    let mut conn = state.pool.acquire().await?;
-    let event = load_public(&mut conn, &id).await?;
+async fn public_results(conn: &mut SqliteConnection, event: &Event) -> AppResult<Option<Value>> {
     let published = event.status == "published";
     let show_criteria = published || event.visibility == "live_full";
-
-    let results = if published {
+    if published {
         // The published ranking is the official snapshot, with per-criterion and per-judge data.
-        let (ranking, _) = domain::resolve_ranking(&mut conn, &event, Mode::Official).await?;
-        Some(domain::ranking_json(&mut conn, &id, &ranking).await?)
+        let (ranking, _) = domain::resolve_ranking(conn, event, Mode::Official).await?;
+        Ok(Some(domain::ranking_json(conn, &event.id, &ranking).await?))
     } else if event.visibility == "hidden" {
-        None
+        Ok(None)
     } else {
-        let mut ranking = domain::compute_ranking(&mut conn, &event, Mode::Provisional).await?;
+        let mut ranking = domain::compute_ranking(conn, event, Mode::Provisional).await?;
         for row in &mut ranking.rows {
             row.judges.clear();
             if !show_criteria {
                 row.criteria.clear();
             }
         }
-        Some(domain::ranking_json(&mut conn, &id, &ranking).await?)
+        Ok(Some(domain::ranking_json(conn, &event.id, &ranking).await?))
+    }
+}
+
+async fn public_event(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    // Read before loading the event: a change racing with the computation then leaves a stale tag.
+    let version = state.sse.version(&id);
+    let mut conn = state.pool.acquire().await?;
+    let event = load_public(&mut conn, &id).await?;
+    let published = event.status == "published";
+    let show_criteria = published || event.visibility == "live_full";
+
+    // Ranking is the expensive part and is shared by all viewers: cache it per event until the next
+    // change notification (the same ones that trigger SSE refetches). The async lock is held while computing so concurrent misses at one version compute once.
+    let mut cache = state.public_results.lock().await;
+    let results = match cache.get(&id).filter(|(v, _)| *v == version) {
+        Some((_, results)) => results.clone(),
+        None => {
+            let results = public_results(&mut conn, &event).await?;
+            cache.insert(id.clone(), (version, results.clone()));
+            results
+        }
     };
+    drop(cache);
 
     let mut event_json = json!({
         "id": event.id,

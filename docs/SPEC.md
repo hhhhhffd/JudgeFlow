@@ -158,7 +158,9 @@ One `tokio::sync::broadcast` channel per event (created lazily). Messages are in
 The public stream is filtered to `scores`, `status`, `event`, `composition`, `stage` (no `presence`, `judges`, `alert`).
 `presence` is sent only for judge heartbeats (last seen / pending count); judge clients ignore it
 (as well as `scores`), the admin client treats it like `judges`. `judges` is for real judge changes.
-Clients debounce (~500 ms) and refetch the relevant endpoint. Keep-alive comment every 15 s.
+Clients debounce (~500 ms) and refetch the relevant endpoint. The hub also keeps a per-event version counter
+bumped by every notification except `presence`/`alert`; `GET /api/public/events/:id` caches its `results` per
+event keyed by that version (computed once per change, shared by all viewers). Keep-alive comment every 15 s.
 The judge stream re-checks every 30 s that the judge is still active and its token unchanged, and
 ends otherwise. Request logs redact token path segments (`/j/***`, `/invite/***`, `/api/invites/***/...`).
 

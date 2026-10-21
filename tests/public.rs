@@ -265,3 +265,53 @@ async fn public_stream_opens_for_non_draft_events() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.headers()["content-type"], "text/event-stream");
 }
+
+/// The public ranking is cached per event; every change that notifies SSE must drop it.
+#[tokio::test]
+async fn public_results_cache_is_invalidated_by_changes() {
+    let fx = Fixture::new(2, true).await;
+    set_visibility(&fx, "live_full").await;
+    let rows = |body: &Value| body["results"]["rows"].as_array().unwrap().clone();
+
+    // Prime the cache while nobody has scored.
+    let first = public(&fx).await;
+    assert_eq!(first.status, StatusCode::OK);
+    assert!(rows(&first.body).iter().all(|r| r["score_x100"].is_null()));
+    // A second request is served from the cache and is identical.
+    assert_eq!(public(&fx).await.body, first.body);
+
+    // Scores.
+    fx.score_all(0, 1000, 500).await;
+    let scored = rows(&public(&fx).await.body);
+    assert_eq!(
+        row_for(&json!({ "rows": scored }), "Альфа")["score_x100"],
+        10000
+    );
+
+    // Event: the title is part of the public payload.
+    let renamed = fx
+        .admin(
+            Method::PATCH,
+            &format!("/events/{}", fx.event_id),
+            Some(json!({ "title": "Новое имя" })),
+        )
+        .await;
+    assert_eq!(renamed.status, StatusCode::OK, "{:?}", renamed.body);
+    assert_eq!(public(&fx).await.body["event"]["title"], "Новое имя");
+
+    // Judges: deactivating the only judge who scored empties the ranking's sheets.
+    let deactivated = fx
+        .admin(
+            Method::PATCH,
+            &format!("/judges/{}", fx.judges[0].0),
+            Some(json!({ "is_active": false })),
+        )
+        .await;
+    assert_eq!(deactivated.status, StatusCode::OK, "{:?}", deactivated.body);
+    let after_judge = rows(&public(&fx).await.body);
+    assert!(after_judge.iter().all(|r| r["score_x100"].is_null()));
+
+    // Event: hiding results is applied immediately.
+    set_visibility(&fx, "hidden").await;
+    assert!(public(&fx).await.body["results"].is_null());
+}
