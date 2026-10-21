@@ -14,7 +14,7 @@ export interface HotkeyActions {
   onSubmit: () => void
 }
 
-function isTyping(t: EventTarget | null) {
+export function isTyping(t: EventTarget | null) {
   return t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))
 }
 
@@ -54,7 +54,7 @@ export function useHotkeys(actions: HotkeyActions) {
   }, [])
 }
 
-export function HotkeysHelp() {
+export function HotkeysHelp({ rows = judgeText.hotkeys.rows }: { rows?: readonly (readonly [string, string])[] }) {
   const t = judgeText.hotkeys
   return (
     <Popover.Root>
@@ -68,7 +68,7 @@ export function HotkeysHelp() {
         <Popover.Content align="end" sideOffset={8} className="z-50 w-80 rounded-xl border bg-popover p-4 text-popover-foreground shadow-lg outline-none">
           <h2 className="mb-3 text-sm font-semibold">{t.title}</h2>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
-            {t.rows.map(([keys, what]) => (
+            {rows.map(([keys, what]) => (
               <div key={keys} className="contents">
                 <dt>
                   <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-xs whitespace-nowrap">{keys}</kbd>

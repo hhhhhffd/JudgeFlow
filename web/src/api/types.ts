@@ -4,7 +4,9 @@
 export type Id = string
 export type Role = 'owner' | 'admin'
 export type EventStatus = 'draft' | 'judging' | 'locked' | 'finalized' | 'published'
-export type ScoringMode = 'team' | 'criterion'
+export type ScoringMode = 'team' | 'criterion' | 'pairwise'
+export type Normalization = 'none' | 'center'
+export type Winner = 'a' | 'b' | 'tie'
 export type Visibility = 'hidden' | 'live_totals' | 'live_full'
 export type AlertAlign = 'left' | 'center'
 export type StageView = 'waiting' | 'leaderboard' | 'podium'
@@ -68,6 +70,9 @@ export interface EventListItem {
   criteria_count: number
   judges_count: number
   submitted_count: number
+  /** SPEC §13: rounds are chained through the parent. */
+  parent_event_id: Id | null
+  round: number
   created_at: number
 }
 
@@ -102,6 +107,9 @@ export interface EventRecord {
   stage_revealed: number
   /** Track shown on the stage; null = teams without a track / the only group. */
   stage_track_id: Id | null
+  parent_event_id: Id | null
+  round: number
+  normalization: Normalization
   locked_at: number | null
   created_at: number
   updated_at: number
@@ -187,6 +195,7 @@ export type UpdateEventRequest = Partial<
     | 'stage_view'
     | 'stage_top_n'
     | 'stage_track_id'
+    | 'normalization'
   >
 >
 
@@ -272,6 +281,12 @@ export interface JudgeScore {
   score_x100: number
 }
 export interface RankingRow {
+  /** Pairwise mode only: decided comparisons of the team. */
+  wins?: number
+  losses?: number
+  ties?: number
+  /** Present when centering is on: the score before normalization. */
+  raw_score_x100?: number | null
   /** Ranks restart per track. */
   track_id: Id | null
   rank: number | null
@@ -339,6 +354,13 @@ export interface JudgeScoreRecord {
   note: string | null
   edited_at: number
 }
+export interface ComparisonRecord {
+  id: Id
+  team_a: Id
+  team_b: Id
+  winner: Winner | null
+  edited_at: number | null
+}
 export interface JudgeSession {
   judge: { id: Id; name: string; submitted_at: number | null }
   event: JudgeSessionEvent
@@ -346,6 +368,8 @@ export interface JudgeSession {
   criteria: Criterion[]
   tracks: Track[]
   scores: JudgeScoreRecord[]
+  /** Pairwise mode only. */
+  comparisons?: ComparisonRecord[]
 }
 export interface ScoreItem {
   team_id: Id
@@ -451,4 +475,42 @@ export interface SheetFile {
   token: string
   exported_at: number
   items: ScoreItem[]
+}
+
+// ---- rounds (SPEC §13) ----
+export interface NextRoundRequest {
+  title: string
+  team_ids: Id[]
+  scoring_mode: ScoringMode
+  copy_criteria: boolean
+  copy_judges: boolean
+}
+export interface NextRoundResponse {
+  event: EventFull
+  links: JudgeWithLink[]
+}
+
+// ---- pairwise comparisons (SPEC §13) ----
+export interface ComparisonItem {
+  id: Id
+  /** null clears the decision. */
+  winner: Winner | null
+  edited_at: number
+}
+export type ComparisonResultStatus = 'ok' | 'stale' | 'rejected'
+export interface ComparisonResult {
+  id: Id
+  status: ComparisonResultStatus
+  error?: string
+  server?: { winner: Winner | null; edited_at: number }
+}
+export interface PutComparisonsResponse {
+  results: ComparisonResult[]
+}
+export interface ReservePairsResponse {
+  comparisons: ComparisonRecord[]
+}
+/** 409 details of POST /judge/submit in pairwise mode while undecided pairs remain. */
+export interface SubmitOpenDetails {
+  open: Id[]
 }

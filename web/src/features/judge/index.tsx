@@ -4,6 +4,8 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { judgeText } from '@/i18n/judge'
 import { DeskController } from './controller'
 import { Desk } from './desk'
+import { pendingComparisons } from './pairwise'
+import { PairwiseDesk } from './pairwise-desk'
 import { pendingCount } from './scoring'
 import { FailedScreen, LoadingScreen, NoTokenScreen, RevokedScreen } from './screens'
 import { getStoredToken, setStoredToken } from './storage'
@@ -55,8 +57,9 @@ function DeskRoot({ token, onForget }: { token: string; onForget: () => void }) 
       .finally(onForget)
   }
 
-  if (state.phase === 'revoked') return <RevokedScreen unsynced={pendingCount(state.rows)} onRecheck={() => controller.recheck()} onForget={forget} />
+  if (state.phase === 'revoked') return <RevokedScreen unsynced={pendingCount(state.rows) + pendingComparisons(state.comparisons)} onRecheck={() => controller.recheck()} onForget={forget} />
   if (state.phase === 'failed') return <FailedScreen message={state.failure} onRetry={() => controller.recheck()} />
   if (!state.session) return <LoadingScreen />
+  if (state.session.event.scoring_mode === 'pairwise') return <PairwiseDesk controller={controller} session={state.session} />
   return <Desk controller={controller} session={state.session} />
 }

@@ -46,6 +46,9 @@ export const eventsApi = {
   transition: (id: T.Id, body: T.TransitionRequest) =>
     request<T.EventFull>(`/api/events/${id}/transition`, { method: 'POST', body }),
 
+  nextRound: (id: T.Id, body: T.NextRoundRequest) =>
+    request<T.NextRoundResponse>(`/api/events/${id}/next-round`, { method: 'POST', body }),
+
   addTeam: (id: T.Id, body: T.TeamInput) => request<T.Team>(`/api/events/${id}/teams`, { method: 'POST', body }),
   addTeamsBulk: (id: T.Id, teams: T.TeamInput[]) =>
     request<T.Team[]>(`/api/events/${id}/teams/bulk`, { method: 'POST', body: { teams } }),
@@ -114,7 +117,13 @@ export const judgeApi = {
   session: (token: string, signal?: AbortSignal) => request<T.JudgeSession>('/api/judge/session', { ...j(token), signal }),
   putScores: (token: string, items: T.ScoreItem[], signal?: AbortSignal) =>
     request<T.PutScoresResponse>('/api/judge/scores', { method: 'PUT', body: { items } satisfies T.PutScoresRequest, ...j(token), signal }),
-  submit: (token: string) => request<T.JudgeSubmitResponse>('/api/judge/submit', { method: 'POST', ...j(token) }),
+  reservePairs: (token: string, count: number) =>
+    request<T.ReservePairsResponse>('/api/judge/pairs/reserve', { method: 'POST', body: { count }, ...j(token) }),
+  putComparisons: (token: string, items: T.ComparisonItem[], signal?: AbortSignal) =>
+    request<T.PutComparisonsResponse>('/api/judge/comparisons', { method: 'PUT', body: { items }, ...j(token), signal }),
+  /** `releaseOpen` discards the judge's undecided pairs (pairwise mode). */
+  submit: (token: string, releaseOpen = false) =>
+    request<T.JudgeSubmitResponse>('/api/judge/submit', { method: 'POST', body: releaseOpen ? { release_open: true } : undefined, ...j(token) }),
   unsubmit: (token: string) => request<T.JudgeSubmitResponse>('/api/judge/unsubmit', { method: 'POST', ...j(token) }),
   heartbeat: (token: string, pending_count: number) =>
     request<void>('/api/judge/heartbeat', { method: 'POST', body: { pending_count } satisfies T.HeartbeatRequest, ...j(token) }),

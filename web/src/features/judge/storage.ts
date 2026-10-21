@@ -2,6 +2,7 @@
 // per-judge session cache + score rows (IndexedDB).
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import type { JudgeSession } from '@/api/types'
+import type { LocalComparison } from './pairwise'
 import { adoptedWins, canDeleteStored, canOverwriteStored, pickOrphanKeys, type LocalRow, type RowRef } from './scoring'
 
 const TOKEN_KEY = 'jf.judge.token'
@@ -52,14 +53,18 @@ type StoredRow = LocalRow & { k: string }
 interface DeskDB extends DBSchema {
   sessions: { key: string; value: { k: string; session: JudgeSession; saved_at: number } }
   rows: { key: [string, string, string]; value: StoredRow; indexes: { byToken: string } }
+  comparisons: { key: [string, string]; value: LocalComparison & { k: string }; indexes: { byToken: string } }
 }
 
 let dbPromise: Promise<IDBPDatabase<DeskDB>> | null = null
 function db() {
-  dbPromise ??= openDB<DeskDB>('judgeflow-judge', 1, {
-    upgrade(d) {
-      d.createObjectStore('sessions', { keyPath: 'k' })
-      d.createObjectStore('rows', { keyPath: ['k', 'team_id', 'criterion_id'] }).createIndex('byToken', 'k')
+  dbPromise ??= openDB<DeskDB>('judgeflow-judge', 2, {
+    upgrade(d, oldVersion) {
+      if (oldVersion < 1) {
+        d.createObjectStore('sessions', { keyPath: 'k' })
+        d.createObjectStore('rows', { keyPath: ['k', 'team_id', 'criterion_id'] }).createIndex('byToken', 'k')
+      }
+      if (oldVersion < 2) d.createObjectStore('comparisons', { keyPath: ['k', 'id'] }).createIndex('byToken', 'k')
     },
   }).catch((e) => {
     dbPromise = null
@@ -68,10 +73,14 @@ function db() {
   return dbPromise
 }
 
-export async function loadDesk(k: string): Promise<{ session: JudgeSession | null; rows: LocalRow[] }> {
+export async function loadDesk(k: string): Promise<{ session: JudgeSession | null; rows: LocalRow[]; comparisons: LocalComparison[] }> {
   const d = await db()
-  const [saved, stored] = await Promise.all([d.get('sessions', k), d.getAllFromIndex('rows', 'byToken', k)])
-  return { session: saved?.session ?? null, rows: stored.map((r): LocalRow => ({ team_id: r.team_id, criterion_id: r.criterion_id, value_x100: r.value_x100, note: r.note, edited_at: r.edited_at, dirty: r.dirty, error: r.error })) }
+  const [saved, stored, comparisons] = await Promise.all([
+    d.get('sessions', k),
+    d.getAllFromIndex('rows', 'byToken', k),
+    d.getAllFromIndex('comparisons', 'byToken', k),
+  ])
+  return { session: saved?.session ?? null, comparisons: comparisons.map((c): LocalComparison => ({ id: c.id, team_a: c.team_a, team_b: c.team_b, winner: c.winner, edited_at: c.edited_at, ord: c.ord, dirty: c.dirty, error: c.error })), rows: stored.map((r): LocalRow => ({ team_id: r.team_id, criterion_id: r.criterion_id, value_x100: r.value_x100, note: r.note, edited_at: r.edited_at, dirty: r.dirty, error: r.error })) }
 }
 
 export async function saveSession(k: string, session: JudgeSession) {
@@ -81,8 +90,13 @@ export async function saveSession(k: string, session: JudgeSession) {
 /** Deletes the cached session and every score row (synced or not) stored under this token. */
 export async function forgetDesk(k: string) {
   const d = await db()
-  const tx = d.transaction(['sessions', 'rows'], 'readwrite')
-  await Promise.all([tx.objectStore('sessions').delete(k), tx.objectStore('rows').delete(IDBKeyRange.bound([k], [k, '\uffff', '\uffff'])), tx.done])
+  const tx = d.transaction(['sessions', 'rows', 'comparisons'], 'readwrite')
+  await Promise.all([
+    tx.objectStore('sessions').delete(k),
+    tx.objectStore('rows').delete(IDBKeyRange.bound([k], [k, '\uffff', '\uffff'])),
+    tx.objectStore('comparisons').delete(IDBKeyRange.bound([k], [k, '\uffff'])),
+    tx.done,
+  ])
 }
 
 /** Read-compare-write in one transaction, so a concurrent tab's newer unsynced edit is never clobbered. */
@@ -97,6 +111,20 @@ export async function writeRows(k: string, upserts: LocalRow[], deletes: RowRef[
       const key: [string, string, string] = [k, r.team_id, r.criterion_id]
       if (canDeleteStored(await tx.store.get(key), r)) await tx.store.delete(key)
     }),
+  ]
+  await Promise.all([...ops, tx.done])
+}
+
+/** Same multi-tab guard as writeRows: a newer unsynced decision stored by another tab is kept. */
+export async function writeComparisons(k: string, upserts: LocalComparison[], deletes: string[]) {
+  const d = await db()
+  const tx = d.transaction('comparisons', 'readwrite')
+  const ops = [
+    ...upserts.map(async (c) => {
+      const stored = await tx.store.get([k, c.id])
+      if (!(stored?.dirty && (stored.edited_at ?? 0) > (c.edited_at ?? 0))) await tx.store.put({ ...c, k })
+    }),
+    ...deletes.map((id) => tx.store.delete([k, id])),
   ]
   await Promise.all([...ops, tx.done])
 }

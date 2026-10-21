@@ -41,7 +41,8 @@ export function Desk({ controller, session }: { controller: DeskController; sess
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const { rows } = state
   const { event, teams, criteria } = session
-  const mode = event.scoring_mode
+  // Pairwise events render PairwiseDesk instead (see index.tsx).
+  const mode = event.scoring_mode === 'criterion' ? 'criterion' : 'team'
 
   const teamsLabel = label(event.teams_label_enabled, event.teams_label, judgeText.defaultTeams)
   const criteriaLabel = label(event.criteria_label_enabled, event.criteria_label, judgeText.defaultCriteria)

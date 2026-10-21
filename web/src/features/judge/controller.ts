@@ -3,7 +3,7 @@
 // work runs on one serial queue, so a session snapshot can never race a confirmed send.
 import { toast } from 'sonner'
 import { ApiError, judgeApi, openStream } from '@/api'
-import type { JudgeSession, SheetFile, SubmitMissingDetails } from '@/api/types'
+import type { JudgeSession, SheetFile, SubmitMissingDetails, SubmitOpenDetails, Winner } from '@/api/types'
 import { judgeText } from '@/i18n/judge'
 import { errorText } from '@/lib/errors'
 import {
@@ -23,7 +23,20 @@ import {
   type LocalRow,
   type Rows,
 } from './scoring'
-import { adoptOrphans, forgetDesk, loadDesk, saveSession, tokenKey, writeRows } from './storage'
+import {
+  addReserved,
+  applyComparisonResults,
+  decide,
+  diffComparisons,
+  mergeComparisons,
+  openComparisons,
+  pendingComparisons,
+  pickComparisonBatch,
+  RESERVE_LOW,
+  RESERVE_TARGET,
+  type Comparisons,
+} from './pairwise'
+import { adoptOrphans, forgetDesk, loadDesk, saveSession, tokenKey, writeComparisons, writeRows } from './storage'
 
 export const SYNC_DEBOUNCE_MS = 1500
 const REFRESH_DEBOUNCE_MS = 500
@@ -39,6 +52,11 @@ export interface DeskState {
   /** The session shown comes from the device cache, the server was not reachable. */
   fromCache: boolean
   rows: Rows
+  /** Pairwise mode: the judge's pairs (open and decided). */
+  comparisons: Comparisons
+  /** The last reserve call could not fill the target: the judge has seen every pair available to them. */
+  reserveExhausted: boolean
+  reserving: boolean
   online: boolean
   syncing: boolean
   /** Batch-level failure (network/5xx); per-item rejections live on the rows. */
@@ -49,6 +67,7 @@ export interface DeskState {
 export type SubmitOutcome =
   | { ok: true }
   | { ok: false; reason: 'pending' }
+  | { ok: false; reason: 'open'; open: number }
   | { ok: false; reason: 'missing'; missing: SubmitMissingDetails['missing'] }
   | { ok: false; reason: 'error'; message: string }
 
@@ -59,6 +78,9 @@ export class DeskController {
     session: null,
     fromCache: false,
     rows: {},
+    comparisons: {},
+    reserveExhausted: false,
+    reserving: false,
     online: typeof navigator === 'undefined' ? true : navigator.onLine,
     syncing: false,
     syncError: null,
@@ -120,11 +142,11 @@ export class DeskController {
 
   private async boot() {
     try {
-      const { session, rows } = await loadDesk(this.k)
+      const { session, rows, comparisons } = await loadDesk(this.k)
       if (!this.running) return
       const byKey: Rows = {}
       for (const r of rows) byKey[`${r.team_id}:${r.criterion_id}`] = r
-      this.set({ rows: byKey, ...(session ? { session, phase: 'ready', fromCache: true } : {}) })
+      this.set({ rows: byKey, comparisons: Object.fromEntries(comparisons.map((c) => [c.id, c])), ...(session ? { session, phase: 'ready', fromCache: true } : {}) })
     } catch (e) {
       console.error('judge: cannot read device storage', e)
       this.set({ storageError: judgeText.sync.storage })
@@ -190,6 +212,17 @@ export class DeskController {
       })
   }
 
+  private persistComparisons(prev: Comparisons, next: Comparisons) {
+    const { upserts, deletes } = diffComparisons(prev, next)
+    if (upserts.length === 0 && deletes.length === 0) return
+    this.writes = this.writes
+      .then(() => writeComparisons(this.k, upserts, deletes))
+      .catch((e) => {
+        console.error('judge: cannot write device storage', e)
+        this.set({ storageError: judgeText.sync.storage })
+      })
+  }
+
   private handleApiError(e: unknown, context: 'refresh' | 'sync'): void {
     if (e instanceof ApiError && e.status === 401) {
       this.set({ phase: 'revoked', syncing: false })
@@ -224,8 +257,12 @@ export class DeskController {
         await this.adoptOrphans(session)
         const prev = this.state.rows
         const rows = pruneOutsideSheet(mergeServer(prev, session.scores), session.teams, session.criteria)
-        this.set({ session, rows, phase: 'ready', fromCache: false, failure: null })
+        const prevComparisons = this.state.comparisons
+        const comparisons = session.comparisons ? mergeComparisons(prevComparisons, session.comparisons) : prevComparisons
+        this.set({ session, rows, comparisons, phase: 'ready', fromCache: false, failure: null })
         this.persist(prev, rows, session)
+        this.persistComparisons(prevComparisons, comparisons)
+        void this.ensureReserve()
       } catch (e) {
         this.handleApiError(e, 'refresh')
       }
@@ -292,6 +329,53 @@ export class DeskController {
     if (rows !== this.state.rows) this.commit(rows)
   }
 
+  /** Pairwise: records (or with null clears) the decision for a pair. */
+  decide(id: string, winner: Winner | null) {
+    if (!this.editable()) return
+    const prev = this.state.comparisons
+    const next = decide(prev, id, winner, Date.now())
+    if (next === prev) return
+    this.set({ comparisons: next, syncError: null })
+    this.persistComparisons(prev, next)
+    window.clearTimeout(this.timers.flush)
+    this.timers.flush = window.setTimeout(() => void this.flush(), SYNC_DEBOUNCE_MS)
+    void this.ensureReserve()
+  }
+
+  /** Tops the reserve up while online and few pairs are open; no-op otherwise. */
+  ensureReserve(): Promise<void> {
+    const open = openComparisons(this.state.comparisons).length
+    if (open >= RESERVE_LOW || this.state.reserveExhausted) return Promise.resolve()
+    return this.reserve(RESERVE_TARGET)
+  }
+
+  /** Manual «Ещё пары»: asks for `extra` more open pairs on top of the current ones. */
+  reserveMore(extra = RESERVE_TARGET): Promise<void> {
+    return this.reserve(openComparisons(this.state.comparisons).length + extra)
+  }
+
+  private reserve(count: number): Promise<void> {
+    const s = this.state.session
+    if (!s || s.event.scoring_mode !== 'pairwise' || !this.editable() || !navigator.onLine || this.state.reserving) return Promise.resolve()
+    this.set({ reserving: true })
+    return this.enqueue(async () => {
+      try {
+        const want = Math.min(20, count)
+        // Decisions go first so the server's pairs list reflects them.
+        await this.doFlush()
+        const res = await judgeApi.reservePairs(this.token, want)
+        const prev = this.state.comparisons
+        const next = addReserved(prev, res.comparisons)
+        this.set({ comparisons: next, reserveExhausted: res.comparisons.length < want, syncError: null })
+        this.persistComparisons(prev, next)
+      } catch (e) {
+        this.handleApiError(e, 'sync')
+      } finally {
+        this.set({ reserving: false })
+      }
+    })
+  }
+
   /** Makes rejected rows eligible for sending again. */
   retryRejected() {
     const rows: Rows = {}
@@ -299,6 +383,10 @@ export class DeskController {
       rows[k] = r.error ? ({ ...r, error: undefined } satisfies LocalRow) : r
     }
     this.commit(rows)
+    const parked = this.state.comparisons
+    const comparisons = Object.fromEntries(Object.entries(parked).map(([id, c]) => [id, c.error ? { ...c, error: undefined } : c]))
+    this.set({ comparisons })
+    this.persistComparisons(parked, comparisons)
     void this.flush()
   }
 
@@ -341,14 +429,42 @@ export class DeskController {
         break
       }
     }
+    staleTotal += await this.flushComparisons()
     if (this.state.syncing) this.set({ syncing: false })
     if (staleTotal > 0) toast.info(judgeText.sync.staleToast(staleTotal))
+  }
+
+  /** Sends dirty pairwise decisions; returns how many came back stale. */
+  private async flushComparisons(): Promise<number> {
+    let stale = 0
+    for (let pass = 0; pass < MAX_PASSES; pass++) {
+      const items = pickComparisonBatch(this.state.comparisons)
+      if (items.length === 0) break
+      this.set({ syncing: true })
+      let outcome
+      try {
+        const res = await judgeApi.putComparisons(this.token, items)
+        outcome = applyComparisonResults(this.state.comparisons, items, res.results)
+      } catch (e) {
+        this.handleApiError(e, 'sync')
+        break
+      }
+      const prev = this.state.comparisons
+      this.set({ comparisons: outcome.comparisons, syncing: false, syncError: null })
+      this.persistComparisons(prev, outcome.comparisons)
+      stale += outcome.stale
+      if (outcome.unconfirmed > 0 && outcome.ok + outcome.stale + outcome.rejected === 0) {
+        this.set({ syncError: judgeText.errors.notConfirmed(outcome.unconfirmed) })
+        break
+      }
+    }
+    return stale
   }
 
   private async heartbeat() {
     if (!navigator.onLine) return
     try {
-      await judgeApi.heartbeat(this.token, pendingCount(this.state.rows))
+      await judgeApi.heartbeat(this.token, pendingCount(this.state.rows) + pendingComparisons(this.state.comparisons))
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) this.set({ phase: 'revoked' })
       else console.warn('judge: heartbeat failed', e)
@@ -373,12 +489,14 @@ export class DeskController {
     this.persist(this.state.rows, this.state.rows, next)
   }
 
-  async submit(): Promise<SubmitOutcome> {
+  /** `releaseOpen` (pairwise): give up the pairs that were reserved but not decided. */
+  async submit(releaseOpen = false): Promise<SubmitOutcome> {
     await this.flush()
-    if (pendingCount(this.state.rows) > 0) return { ok: false, reason: 'pending' }
+    if (pendingCount(this.state.rows) + pendingComparisons(this.state.comparisons) > 0) return { ok: false, reason: 'pending' }
     try {
-      const res = await judgeApi.submit(this.token)
+      const res = await judgeApi.submit(this.token, releaseOpen)
       this.setSubmitted(res.judge)
+      if (releaseOpen) await this.refresh()
       return { ok: true }
     } catch (e) {
       return this.submitFailure(e)
@@ -399,6 +517,8 @@ export class DeskController {
     if (e instanceof ApiError) {
       if (e.status === 401) this.set({ phase: 'revoked' })
       const missing = (e.details as Partial<SubmitMissingDetails> | undefined)?.missing
+      const open = (e.details as Partial<SubmitOpenDetails> | undefined)?.open
+      if (e.status === 409 && Array.isArray(open)) return { ok: false, reason: 'open', open: open.length }
       if (e.status === 409 && Array.isArray(missing)) return { ok: false, reason: 'missing', missing }
     }
     return { ok: false, reason: 'error', message: errorText(e) }

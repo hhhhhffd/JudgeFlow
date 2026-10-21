@@ -42,7 +42,7 @@ export function SubmitDialog({ open, onOpenChange, session, rows, controller, on
     if (outcome.ok) return change(false)
     if (outcome.reason === 'pending') setProblem(`${judgeText.submit.pendingTitle}. ${judgeText.submit.pendingText}`)
     else if (outcome.reason === 'missing') setProblem(judgeText.submit.missingTitle(outcome.missing.length))
-    else setProblem(outcome.message)
+    else if (outcome.reason === 'error') setProblem(outcome.message)
   }
 
   const pending = pendingCount(rows)
