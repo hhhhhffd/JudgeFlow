@@ -210,6 +210,7 @@ fn make_row(
         tie,
         team_id: input.teams[team].clone(),
         score_x100,
+        raw_score_x100: None,
         sheets,
         meets_quorum: sheets >= input.quorum,
         criteria: Vec::new(),
