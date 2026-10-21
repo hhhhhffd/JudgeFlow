@@ -313,3 +313,51 @@ API:
 
 Templates (frontend only): when creating an event or on the criteria step, presets «Хакатон», «Питч»,
 «Конкурс проектов» insert a set of criteria (name, description, max, step, weight) via the bulk endpoint.
+
+## 13. Rounds, pairwise comparisons, normalization (stage 4)
+
+Migration `0005_rounds_pairwise.sql`:
+```
+events.parent_event_id NULL FK→events ON DELETE SET NULL, events.round INTEGER DEFAULT 1
+events.normalization TEXT CHECK(IN ('none','center')) DEFAULT 'none'
+events.scoring_mode CHECK extended with 'pairwise'
+comparisons(id PK, event_id FK CASCADE, judge_id FK CASCADE, team_a FK CASCADE, team_b FK CASCADE,
+            winner NULL CHECK(winner IN ('a','b','tie')), edited_at NULL, created_at)
+```
+
+### Rounds
+- `POST /api/events/:id/next-round` `{title, team_ids, scoring_mode, copy_criteria, copy_judges}` → creates a new
+  `draft` event with `parent_event_id = :id`, `round = parent.round + 1`, the selected teams (keeping names,
+  descriptions and tracks), criteria/tracks if `copy_criteria`, judges by name with NEW tokens if `copy_judges`
+  (response includes `links` like judge create). Allowed when the parent is `finalized`/`published`. Audited on both.
+- Event list items include `parent_event_id` and `round`; the UI groups rounds under the first event.
+
+### Pairwise mode (`scoring_mode = 'pairwise'`)
+- Criteria are not used (draft→judging requires ≥2 teams and ≥1 active judge, criteria optional).
+  Assignments/conflicts/tracks apply: a pair is only formed from two teams of the judge's set in the same track.
+- **Pair reservation (offline-friendly)**: `POST /api/judge/pairs/reserve` `{count}` (1..20) returns the judge's open
+  pairs, creating new ones up to `count` open pairs. New pair selection is deterministic: among eligible pairs this judge
+  has not seen, minimize (times the pair was compared overall, then the sum of both teams' comparison counts), ties by
+  team order; `team_a`/`team_b` order alternates to avoid position bias (by comparison count parity).
+- `PUT /api/judge/comparisons` `{items: [{id, winner: 'a'|'b'|'tie'|null, edited_at}]}` — same per-item semantics as
+  scores (LWW by `edited_at`, `null` clears, grace window in `locked`, `sheet_submitted`, own comparisons only).
+- Judge submit in pairwise mode: allowed when the judge has no open (undecided) reserved pairs — open pairs are
+  released (deleted) on submit only if the judge confirms with `{release_open: true}`; otherwise `409` with
+  `details.open`.
+- Session payload adds `comparisons: [{id, team_a, team_b, winner, edited_at}]` in pairwise mode.
+- **Ranking** (`src/pairwise.rs`, pure): included comparisons = decided comparisons of active judges, submitted only for
+  `official`. Bradley–Terry strengths by the MM algorithm (ties count as half a win for each side), teams with no
+  included comparisons are unranked; strengths normalized so the geometric mean is 1; iterate until max relative change
+  < 1e-12 or 10 000 iterations; `score_x100` = 100 × p(team beats an average team) = 100·s/(s+1), rounded half-up.
+  Determinism: iterate teams in input order; ties: scores equal after rounding to 1e-9 share a rank.
+  To keep BT finite, add one virtual tie against a virtual average team (strength 1) for every ranked team.
+  `sheets` = number of included comparisons involving the team; `quorum` applies to it.
+  Rows add `wins`, `losses`, `ties` (serde default 0) for explainability; `criteria` is `[]`; `judges` lists, per judge,
+  their win rate ×100 for that team.
+
+### Normalization (rubric mode only, opt-in)
+- `events.normalization = 'center'`: removes per-judge leniency. Per ranking group: for each included judge,
+  `offset_j = mean over the judge's included sheets of J − mean over all included sheets of J`;
+  normalized `J' = J − offset_j`. Team score = mean of `J'`. Exact rational arithmetic like the rest of the engine.
+- Rows add `raw_score_x100` (score without normalization) when normalization is on; `judges[].score_x100` stays raw.
+- UI must warn that centering can distort results when judges saw very different subsets of teams, and show both values.
