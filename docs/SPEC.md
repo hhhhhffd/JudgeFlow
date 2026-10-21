@@ -17,6 +17,10 @@ Source of truth for the rewrite. The previous implementation lives on the `v1` b
     the request `Host` (+ `X-Forwarded-Proto`).
   - `JUDGEFLOW_SECRET_KEY` — optional; key material for encrypting TOTP secrets. If unset, a random
     key is generated once into `DATA_DIR/secret.key` (mode 0600) and reused.
+  - `JUDGEFLOW_TRUST_PROXY` — bool, default `false`. When true, the client IP used for rate limiting
+    is taken from `CF-Connecting-IP`, else the first `X-Forwarded-For` entry, else the peer address.
+    Enable only behind a proxy/tunnel (e.g. Cloudflare Tunnel) that sets these headers; otherwise
+    clients could spoof their IP. When false, only the peer address is used.
   - `RUST_LOG` — tracing filter, default `info`.
 - CLI:
   - `judgeflow serve` (default when no subcommand)
@@ -138,8 +142,12 @@ Per-judge breakdown is public only when `published` (from the latest snapshot). 
 ## 7. Realtime (SSE)
 
 One `tokio::sync::broadcast` channel per event (created lazily). Messages are invalidation hints, not data:
-`event: change` / `data: {"kind": "scores" | "status" | "event" | "composition" | "alert" | "judges"}`.
+`event: change` / `data: {"kind": "scores" | "status" | "event" | "composition" | "alert" | "judges" | "presence"}`.
+`presence` is sent only for judge heartbeats (last seen / pending count); judge clients ignore it
+(as well as `scores`), the admin client treats it like `judges`. `judges` is for real judge changes.
 Clients debounce (~500 ms) and refetch the relevant endpoint. Keep-alive comment every 15 s.
+The judge stream re-checks every 30 s that the judge is still active and its token unchanged, and
+ends otherwise. Request logs redact token path segments (`/j/***`, `/invite/***`, `/api/invites/***/...`).
 
 - `GET /api/events/:id/stream` — admin (cookie).
 - `GET /api/public/events/:id/stream` — public (404 for draft).
@@ -181,7 +189,7 @@ Clients debounce (~500 ms) and refetch the relevant endpoint. Keep-alive comment
 
 ### Judge (Bearer token)
 - `GET /api/judge/session` → `{judge: {id, name, submitted_at}, event: {id, title, description, status, scoring_mode, notes_enabled, locked_at, teams_label, teams_label_enabled, criteria_label, criteria_label_enabled, alert: {enabled, title, text, align, button_text, version}, background_url, overlay: {enabled, color, opacity}}, teams, criteria, scores: [{team_id, criterion_id, value_x100, note, edited_at}]}`. 401 for unknown/inactive judge.
-- `PUT /api/judge/scores` `{items: [{team_id, criterion_id, value_x100: int|null, note: string|null, edited_at}]}` → `{results: [{team_id, criterion_id, status: "ok"|"stale"|"rejected", error?: code, server?: {value_x100, note, edited_at}}]}`. Per-item validation (team/criterion belong to the event, `0 <= value <= max`, multiple of `step`); `value_x100: null` deletes the score. Last-writer-wins by `edited_at`: an older item gets `stale` with the server version. Writes are rejected (`sheet_submitted`) after submission. Idempotent.
+- `PUT /api/judge/scores` `{items: [{team_id, criterion_id, value_x100: int|null, note: string|null, edited_at}]}` → `{results: [{team_id, criterion_id, status: "ok"|"stale"|"rejected", error?: code, server?: {value_x100, note, edited_at}}]}`. Per-item validation (team/criterion belong to the event, `0 <= value <= max`, multiple of `step`); `value_x100: null` deletes the score. Last-writer-wins by `edited_at`: an older item gets `stale` with the server version; an item with `edited_at` equal to the stored one overwrites (required so that retries of the same batch are idempotent). Writes are rejected (`sheet_submitted`) after submission. Idempotent.
 - `POST /api/judge/submit` → `{judge}`; `409` with `details.missing: [{team_id, criterion_id}]` when incomplete; only in `judging`.
 - `POST /api/judge/unsubmit` → `{judge}`; only in `judging`.
 - `POST /api/judge/heartbeat` `{pending_count}` → 204 (updates `last_seen_at`).
