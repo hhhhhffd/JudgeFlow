@@ -221,3 +221,42 @@ Routes: `/firststart`, `/login`, `/invite/:token`, `/` (events), `/events/:id/*`
   `PUT …/order` and `DELETE` return `204`. Judge `PATCH`/`reopen` return the judge summary.
 - Status codes: wrong TOTP code → `401 unauthorized`; rate limit → `429 rate_limited`; duplicate admin name → `409 conflict`.
 - Invite list items never contain the URL — it is shown once on creation.
+
+## 11. Stage Mode (stage 2)
+
+A projector/OBS screen for the award ceremony with a controlled reveal of winners. It shows only
+the official ranking (latest snapshot), so it works in `finalized` and `published`. Typical flow:
+finalize → ceremony on the stage screen → publish.
+
+Event columns (migration `0003_stage.sql`):
+`stage_view TEXT CHECK(IN ('waiting','leaderboard','podium')) DEFAULT 'waiting'`,
+`stage_top_n INTEGER DEFAULT 3` (1..10), `stage_revealed INTEGER DEFAULT 0`.
+
+- **Reveal unit** = a rank group (all rows sharing a rank) among rows with `rank <= stage_top_n`.
+  Groups are revealed from the lowest place to the first: with top 3 → 3rd, then 2nd, then 1st.
+  `stage_revealed` counts revealed groups (0..number of groups).
+- **Views**:
+  - `waiting` — title/background only, no results.
+  - `leaderboard` — rows with `rank > stage_top_n` and unranked rows are always shown (bottom part of the
+    table); top-N rows only if their group is revealed.
+  - `podium` — only top-N rows of revealed groups.
+- The server filters: unrevealed rows are never sent. Per-judge data is never sent to the stage.
+
+API:
+- `PATCH /api/events/:id` also accepts `stage_view`, `stage_top_n` (changing `stage_top_n` resets `stage_revealed` to 0).
+- `POST /api/events/:id/stage/reveal` `{action: "next" | "prev" | "reset" | "all"}` → `EventFull`;
+  only in `finalized`/`published` (`409 invalid_state` otherwise). Audited.
+- `GET /api/public/events/:id/stage` →
+  `{event: {id, title, status, background_url, overlay, teams_label..., criteria: [{id,name}]},
+    stage: {view, top_n, revealed, total_groups, available: bool},
+    rows: [ranking rows with team_name, criteria averages, no judges]}`.
+  `available = status in (finalized, published)`; when not available, `rows` is `[]`. Draft → 404.
+- SSE kind `"stage"` on any stage change (also delivered on the public stream). Judge clients ignore it.
+
+Frontend:
+- `/stage/:eventId` — fullscreen projector page (lazy chunk, no admin code). `?widget=1` renders with a
+  transparent background and no chrome for OBS browser sources. Reveal animation for newly revealed groups
+  (respect `prefers-reduced-motion`); podium layout 2-1-3 for top 3.
+- Control Room tab «Сцена»: view switch, top N, buttons «Показать следующее место» / «Назад» / «Сброс» /
+  «Показать всё», a live preview of what the stage shows, link to `/stage/:id` and the OBS widget URL.
+  Keyboard: `Space`/`→` next, `←` prev on the control tab.
