@@ -119,7 +119,7 @@ export function JudgesSection() {
         )}
       </section>
       <Distribution />
-      {!pairwise && <SheetImport />}
+      <SheetImport />
       {links && <LinksDialog title={event.title} links={links} onClose={() => {
           setLinks(null)
           if (location.state) navigate(location.pathname, { replace: true, state: null })

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 import { loginAsAdmin } from './admin'
 
@@ -118,6 +119,20 @@ test('rounds: rubric event -> next pairwise round with top 3 -> pairs (one offli
   await pairs.keyboard.press('ArrowDown')
   await expect(pairs.getByText('Решено пар: 3')).toBeVisible()
   await expect(pairs.getByText('Синхронизировано')).toBeVisible()
+
+  // ---- emergency backup of the pairwise decisions, imported by the organizer ----
+  await pairs.getByRole('button', { name: 'Резервная копия листа' }).click()
+  const [download] = await Promise.all([pairs.waitForEvent('download'), pairs.getByRole('button', { name: /Скачать/ }).click()])
+  const backupPath = await download.path()
+  const backup = JSON.parse(readFileSync(backupPath, 'utf8'))
+  expect(backup.items).toEqual([])
+  expect(backup.comparisons).toHaveLength(3)
+  await pairs.keyboard.press('Escape')
+
+  await page.getByRole('link', { name: 'Судьи' }).click()
+  await page.getByLabel('Файл листа судьи').setInputFiles(backupPath)
+  await expect(page.getByText('Лист «Судья Раундов» обработан')).toBeVisible()
+  await expect(page.getByText('Отклонено: 0')).toBeVisible()
 
   await pairs.keyboard.press('Control+Enter')
   await pairs.getByRole('dialog').getByRole('button', { name: /^Сдать(,|$)/ }).click()
