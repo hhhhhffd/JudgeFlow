@@ -260,3 +260,56 @@ Frontend:
 - Control Room tab «Сцена»: view switch, top N, buttons «Показать следующее место» / «Назад» / «Сброс» /
   «Показать всё», a live preview of what the stage shows, link to `/stage/:id` and the OBS widget URL.
   Keyboard: `Space`/`→` next, `←` prev on the control tab.
+
+## 12. Tracks, assignments, conflicts, templates, emergency export (stage 3)
+
+Migration `0004_tracks_assignments.sql`:
+```
+tracks(id PK, event_id FK CASCADE, name, sort_order)
+teams.track_id NULL FK→tracks ON DELETE SET NULL
+criteria.track_id NULL FK→tracks ON DELETE CASCADE      -- NULL = applies to every team
+assignments(judge_id FK CASCADE, team_id FK CASCADE, PRIMARY KEY(judge_id, team_id))
+conflicts(judge_id FK CASCADE, team_id FK CASCADE, PRIMARY KEY(judge_id, team_id))
+events.stage_track_id NULL FK→tracks ON DELETE SET NULL  -- which track the stage shows
+```
+
+Rules:
+- **Team criteria** = criteria with `track_id IS NULL` or `= team.track_id`.
+- **Judge's teams** = assigned teams if the judge has ≥1 assignment, otherwise all teams; minus conflicts
+  (a conflict always wins). A judge never sees, scores or is counted for teams outside this set.
+- A judge's **sheet for a team** is complete when every team criterion is scored. Submit requires complete
+  sheets for all of the judge's teams; `scored_count`/matrix totals use the judge's teams × team criteria.
+- Score writes for a team outside the judge's set or a criterion not applicable to the team are rejected
+  with `not_assigned`.
+- **Ranking is computed per track**: teams grouped by track (track order; teams without a track form a last
+  group, or the only group when the event has no tracks). Each group is ranked independently by the existing
+  engine with that group's criteria. The resulting `Ranking.rows` are concatenated in group order; each `Row`
+  gains `track_id: string | null` (serde default `null`, so older snapshots still parse) and ranks restart per
+  track. Responses that return a ranking also return `tracks: [{id, name}]`.
+- Stage (§11) shows the group selected by `stage_track_id` (`null` = teams without a track / the only group);
+  reveal groups are counted within that track; changing `stage_track_id` resets `stage_revealed`.
+- Tracks, team/criterion `track_id` are composition: editable only in `draft`. Assignments and conflicts are
+  editable in any status except `finalized`/`published` (late judge, discovered conflict); audited; SSE `judges`.
+
+API:
+- Tracks: `POST /api/events/:id/tracks` `{name}`, `PATCH /api/tracks/:id`, `DELETE /api/tracks/:id`,
+  `PUT /api/events/:id/tracks/order`. Teams/criteria create/patch/bulk accept `track_id`.
+- `EventFull` adds `tracks`, `assignments: [{judge_id, team_id}]`, `conflicts: [{judge_id, team_id}]`;
+  teams/criteria carry `track_id`.
+- `PUT /api/events/:id/assignments` `{pairs: [{judge_id, team_id}]}` — replaces all; `[]` = everyone judges everything.
+- `POST /api/events/:id/assignments/auto` `{judges_per_team}` — replaces all assignments deterministically:
+  teams in order; for each team pick the `judges_per_team` active judges without a conflict with the fewest
+  assignments so far (ties → judge creation order). `409` if some team can't get enough judges
+  (`details.short: [{team_id, got}]`) unless `allow_short: true`.
+- `PUT /api/events/:id/conflicts` `{pairs}` — replaces all.
+- Matrix cells add `assigned: bool`, `conflict: bool`; `total` = team criteria count (0 for teams outside the judge's set).
+- Judge session: `teams` only the judge's teams (with `track_id`), `criteria` with `track_id`, `tracks`.
+- **Emergency sheet export/import**: the Judge Desk can download a JSON file
+  `{format: "judgeflow-sheet/1", event_id, judge_id, judge_name, token, exported_at, items: [score items as in PUT /judge/scores]}`.
+  The organizer uploads it: `POST /api/events/:id/import-sheet` (JSON body) — the server verifies that `token`
+  belongs to an active-or-inactive judge of this event, then applies `items` with exactly the same rules as
+  `PUT /api/judge/scores` (LWW, grace window, `sheet_submitted`) and returns the same per-item results. Audited.
+  Rejected in `finalized`/`published`.
+
+Templates (frontend only): when creating an event or on the criteria step, presets «Хакатон», «Питч»,
+«Конкурс проектов» insert a set of criteria (name, description, max, step, weight) via the bulk endpoint.
