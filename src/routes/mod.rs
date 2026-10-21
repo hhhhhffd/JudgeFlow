@@ -54,7 +54,7 @@ async fn api_not_found() -> AppError {
 
 async fn log_requests(request: Request, next: Next) -> Response {
     let method = request.method().clone();
-    let path = request.uri().path().to_string();
+    let path = redact_path(request.uri().path());
     let started = Instant::now();
     let response = next.run(request).await;
     tracing::info!(
@@ -65,4 +65,41 @@ async fn log_requests(request: Request, next: Next) -> Response {
         "request"
     );
     response
+}
+
+/// Replaces the secret token segment of `/j/<token>`, `/invite/<token>` and
+/// `/api/invites/<token>/...` so tokens never reach the logs.
+fn redact_path(path: &str) -> String {
+    let mut segments: Vec<&str> = path.split('/').collect();
+    // segments[0] is the empty string before the leading slash.
+    let token_index = match segments.as_slice() {
+        ["", "j" | "invite", _, ..] => Some(2),
+        ["", "api", "invites", _, ..] => Some(3),
+        _ => None,
+    };
+    if let Some(index) = token_index {
+        segments[index] = "***";
+    }
+    segments.join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_path;
+
+    #[test]
+    fn redacts_token_segments_only() {
+        assert_eq!(redact_path("/j/secret123"), "/j/***");
+        assert_eq!(redact_path("/invite/secret123"), "/invite/***");
+        assert_eq!(
+            redact_path("/api/invites/secret123/accept"),
+            "/api/invites/***/accept"
+        );
+        assert_eq!(redact_path("/api/invites"), "/api/invites");
+        assert_eq!(
+            redact_path("/api/events/abc/stream"),
+            "/api/events/abc/stream"
+        );
+        assert_eq!(redact_path("/"), "/");
+    }
 }
