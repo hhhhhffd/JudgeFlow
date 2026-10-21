@@ -408,3 +408,9 @@ comparisons(id PK, event_id FK CASCADE, judge_id FK CASCADE, team_a FK CASCADE, 
   «Побед;Поражений;Ничьих» after «Кворум» and omits criteria columns in pairwise events.
 - Matrix: `scored` = decided comparisons involving the team by that judge, `total` = 0 (no fixed total).
 - Deviation: `POST /api/events/:id/import-sheet` returns `400 validation` for pairwise events (sheet files carry scores only).
+
+### Pairwise emergency export (amends §12 import-sheet)
+The sheet file may carry `comparisons: [{id, winner, edited_at}]` (format stays `judgeflow-sheet/1`; `items` may be
+empty). For a pairwise event `POST /api/events/:id/import-sheet` applies `comparisons` with exactly the same function
+as `PUT /api/judge/comparisons` and returns `{results: [...]}` in that endpoint's shape; `items` must be empty there.
+For rubric events `comparisons` must be absent or empty. The Judge Desk offers the backup in pairwise mode too.
