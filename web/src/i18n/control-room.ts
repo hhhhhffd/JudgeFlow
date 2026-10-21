@@ -1,5 +1,5 @@
 // Control Room strings (kept apart from ru.ts so feature agents do not collide).
-import type { Visibility } from '@/api/types'
+import type { StageView, Visibility } from '@/api/types'
 
 export const cr = {
   back: 'Все мероприятия',
@@ -11,6 +11,7 @@ export const cr = {
     setup: 'Настройка',
     judges: 'Судьи',
     results: 'Результаты',
+    stage: 'Сцена',
     alert: 'Объявление',
     appearance: 'Оформление',
     audit: 'Журнал',
@@ -231,6 +232,42 @@ export const cr = {
     emptyText: 'Результаты появятся, когда судьи заполнят хотя бы один лист целиком.',
     quorumNote: (q: number) => `Кворум: ${q} лист.`,
     tiesNote: 'Команды с одинаковым баллом делят место; система не разрешает ничьи сама.',
+  },
+  stage: {
+    title: 'Сцена',
+    text: 'Экран для проектора и трансляции: места открываются по одному, когда вы нажимаете кнопку.',
+    flowTitle: 'Порядок церемонии',
+    flow: ['Подведите итоги — на сцене появится официальный рейтинг', 'Покажите места по одному на сцене', 'Опубликуйте итоги на общем табло'],
+    unavailableTitle: 'Сцена пока недоступна',
+    unavailableText: 'Сцена показывает только официальный рейтинг. Он появится после того, как вы подведёте итоги мероприятия.',
+    unavailableStatus: (s: string) => `Сейчас: ${s}.`,
+    viewLabel: 'Что показывать',
+    views: { waiting: 'Ожидание', leaderboard: 'Таблица', podium: 'Пьедестал' } satisfies Record<StageView, string>,
+    viewHelp: {
+      waiting: 'Название и фон мероприятия, без результатов.',
+      leaderboard: 'Общая таблица. Места из призовых строк появляются по мере открытия.',
+      podium: 'Только открытые призовые места на пьедестале.',
+    } satisfies Record<StageView, string>,
+    topNLabel: 'Сколько призовых мест',
+    topN: (n: number) => `Первые ${n}`,
+    topNNote: 'Смена числа мест закрывает все открытые места.',
+    revealTitle: 'Показ мест',
+    progress: (revealed: number, total: number) => `Открыто ${revealed} из ${total}`,
+    noGroups: 'Нет мест для показа: пока ни у одной команды нет оценок.',
+    next: 'Показать следующее место',
+    prev: 'Назад',
+    reset: 'Сброс',
+    all: 'Показать всё',
+    hotkeys: 'Пробел или → — следующее место, ← — назад',
+    previewTitle: 'Так видят зрители',
+    previewFrame: 'Предпросмотр сцены',
+    open: 'Открыть сцену',
+    linkLabel: 'Ссылка на сцену',
+    linkHint: 'Для проектора или демонстрации экрана.',
+    widgetLabel: 'Ссылка для OBS',
+    widgetHint: 'Прозрачный фон без оформления: добавьте как источник «Браузер» в OBS.',
+    revealed: 'Место открыто',
+    failed: 'Не удалось изменить сцену',
   },
   alert: {
     title: 'Объявление для судей',

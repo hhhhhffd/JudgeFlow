@@ -19,12 +19,14 @@ import { JudgesSection } from './judges'
 import { Overview } from './overview'
 import { Results } from './results'
 import { Setup } from './setup'
+import { StageTab } from './stage'
 
 const TABS = [
   { to: '', label: cr.nav.overview, end: true },
   { to: 'setup', label: cr.nav.setup },
   { to: 'judges', label: cr.nav.judges },
   { to: 'results', label: cr.nav.results },
+  { to: 'stage', label: cr.nav.stage },
   { to: 'alert', label: cr.nav.alert },
   { to: 'appearance', label: cr.nav.appearance },
   { to: 'audit', label: cr.nav.audit },
@@ -107,6 +109,7 @@ function EventLayout() {
           <Route path="setup" element={<Setup />} />
           <Route path="judges" element={<JudgesSection />} />
           <Route path="results" element={<Results />} />
+          <Route path="stage" element={<StageTab />} />
           <Route path="alert" element={<AlertEditor />} />
           <Route path="appearance" element={<Appearance />} />
           <Route path="audit" element={<AuditLog />} />
