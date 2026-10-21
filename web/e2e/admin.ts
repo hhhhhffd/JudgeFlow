@@ -11,6 +11,11 @@ export function saveAdmin(name: string, secret: string) {
 export async function loginAsAdmin(page: Page) {
   const { name, secret } = JSON.parse(readFileSync(process.env.E2E_ADMIN_FILE!, 'utf8')) as { name: string; secret: string }
   // The enrollment code used the current step; the next step is accepted (window ±1) and is not a replay.
-  const res = await page.request.post('/api/auth/login', { data: { name, code: totp(secret, 1) } })
+  let res = await page.request.post('/api/auth/login', { data: { name, code: totp(secret, 1) } })
+  if (res.status() === 401) {
+    // Another spec used the same TOTP step a moment ago (replay protection): wait for the next one.
+    await page.waitForTimeout(31_000)
+    res = await page.request.post('/api/auth/login', { data: { name, code: totp(secret, 1) } })
+  }
   if (!res.ok()) throw new Error(`organizer login failed: ${res.status()} ${await res.text()}`)
 }

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, ClipboardPaste, LayoutTemplate, Lock, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react'
 import { eventsApi } from '@/api/endpoints'
 import type { Criterion, Normalization, ScoringMode, Team, Track, UpdateEventRequest } from '@/api/types'
@@ -44,7 +44,8 @@ export function Setup() {
 }
 
 function Card({ title, hint, action, children }: { title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
-  const id = `card-${title}`
+  // Titles contain spaces, which would split an id reference.
+  const id = useId()
   return (
     <section aria-labelledby={id} className="rounded-xl border bg-card p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
