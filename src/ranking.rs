@@ -245,7 +245,7 @@ fn round_half_up(value: &BigRational) -> i64 {
         .floor()
         .to_integer()
         .to_i64()
-        .unwrap_or_default()
+        .expect("scores are bounded by criterion max values and fit in i64")
 }
 
 #[cfg(test)]
