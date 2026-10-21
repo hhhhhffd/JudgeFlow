@@ -477,6 +477,8 @@ export interface SheetFile {
   token: string
   exported_at: number
   items: ScoreItem[]
+  /** Pairwise events (SPEC §13): the judge's local decisions; `items` is then empty. */
+  comparisons?: ComparisonItem[]
 }
 
 // ---- rounds (SPEC §13) ----
@@ -505,6 +507,10 @@ export interface ComparisonResult {
   status: ComparisonResultStatus
   error?: string
   server?: { winner: Winner | null; edited_at: number }
+}
+/** Rubric sheets answer with score results, pairwise ones with comparison results (SPEC §13). */
+export interface ImportSheetResponse {
+  results: (ScoreResult | ComparisonResult)[]
 }
 export interface PutComparisonsResponse {
   results: ComparisonResult[]

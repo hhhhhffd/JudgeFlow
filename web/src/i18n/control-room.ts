@@ -300,7 +300,9 @@ export const cr = {
     staleHint: 'На сервере уже есть более свежие оценки — они сохранены.',
     rejectedTitle: 'Причины отклонения',
     reason: (team: string, criterion: string, why: string) => `${team} · ${criterion}: ${why}`,
+    pairReason: (why: string) => `Решение по паре: ${why}`,
     reasons: {
+      not_found: 'пара не найдена или снята с судьи',
       sheet_submitted: 'лист уже сдан',
       invalid_state: 'оценивание закрыто',
       validation: 'недопустимое значение',

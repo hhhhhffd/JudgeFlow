@@ -81,7 +81,7 @@ export const eventsApi = {
     request<T.EventFull>(`/api/events/${id}/conflicts`, { method: 'PUT', body: { pairs } }),
   /** Applies a `judgeflow-sheet/1` file with the rules of PUT /api/judge/scores. */
   importSheet: (id: T.Id, sheet: unknown) =>
-    request<T.PutScoresResponse>(`/api/events/${id}/import-sheet`, { method: 'POST', body: sheet }),
+    request<T.ImportSheetResponse>(`/api/events/${id}/import-sheet`, { method: 'POST', body: sheet }),
 
   addJudges: (id: T.Id, names: string[]) =>
     request<T.JudgeWithLink[]>(`/api/events/${id}/judges`, { method: 'POST', body: { names } satisfies T.CreateJudgesRequest }),

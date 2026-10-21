@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { FileUp } from 'lucide-react'
 import { eventsApi } from '@/api/endpoints'
-import { SHEET_FORMAT, type PutScoresResponse, type SheetFile } from '@/api/types'
+import { SHEET_FORMAT, type ImportSheetResponse, type SheetFile } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cr } from '@/i18n/control-room'
@@ -13,7 +13,7 @@ const MAX_LISTED = 50
 
 interface Outcome {
   judge: string
-  results: PutScoresResponse['results']
+  results: ImportSheetResponse['results']
 }
 
 /** Reads a file as a judge sheet; returns the error text for files that cannot be one. */
@@ -94,12 +94,14 @@ export function SheetImport() {
               <p className="mb-1 font-medium">{cr.sheet.rejectedTitle}</p>
               <ul className="max-h-48 divide-y overflow-y-auto rounded-lg border">
                 {rejected.slice(0, MAX_LISTED).map((r) => (
-                  <li key={`${r.team_id}:${r.criterion_id}`} className="px-3 py-1.5">
-                    {cr.sheet.reason(
-                      teams.find((t) => t.id === r.team_id)?.name ?? '—',
-                      criteria.find((c) => c.id === r.criterion_id)?.name ?? '—',
-                      cr.sheet.reasons[r.error ?? ''] ?? cr.sheet.reasons.fallback!,
-                    )}
+                  <li key={'id' in r ? r.id : `${r.team_id}:${r.criterion_id}`} className="px-3 py-1.5">
+                    {'id' in r
+                      ? cr.sheet.pairReason(cr.sheet.reasons[r.error ?? ''] ?? cr.sheet.reasons.fallback!)
+                      : cr.sheet.reason(
+                          teams.find((t) => t.id === r.team_id)?.name ?? '—',
+                          criteria.find((c) => c.id === r.criterion_id)?.name ?? '—',
+                          cr.sheet.reasons[r.error ?? ''] ?? cr.sheet.reasons.fallback!,
+                        )}
                   </li>
                 ))}
               </ul>
