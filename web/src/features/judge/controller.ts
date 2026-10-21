@@ -9,6 +9,7 @@ import { errorText } from '@/lib/errors'
 import {
   applyEdit,
   applyNote,
+  adoptedWins,
   applyResults,
   diffRows,
   itemKeys,
@@ -20,7 +21,7 @@ import {
   type LocalRow,
   type Rows,
 } from './scoring'
-import { loadDesk, saveSession, tokenKey, writeRows } from './storage'
+import { adoptOrphans, loadDesk, saveSession, tokenKey, writeRows } from './storage'
 
 export const SYNC_DEBOUNCE_MS = 1500
 const REFRESH_DEBOUNCE_MS = 500
@@ -69,6 +70,7 @@ export class DeskController {
   private timers: { flush?: number; refresh?: number; retry?: number; heartbeat?: number } = {}
   private stopStream: (() => void) | null = null
   private running = false
+  private adoptionDone = false
   private readonly k: string
 
   constructor(private readonly token: string) {
@@ -124,7 +126,8 @@ export class DeskController {
     this.stopStream = openStream(judgeApi.streamUrl, {
       token: this.token,
       onChange: (kind) => {
-        if (kind !== 'scores') this.scheduleRefresh()
+        // scores are our own echo; presence is judges' heartbeats: neither changes what a judge sees.
+        if (kind !== 'scores' && kind !== 'presence') this.scheduleRefresh()
       },
       onOpen: ({ reconnect }) => {
         if (!reconnect) return
@@ -209,6 +212,7 @@ export class DeskController {
       this.refreshQueued = false
       try {
         const session = await judgeApi.session(this.token)
+        await this.adoptOrphans(session)
         const prev = this.state.rows
         const rows = mergeServer(prev, session.scores)
         this.set({ session, rows, phase: 'ready', fromCache: false, failure: null })
@@ -217,6 +221,28 @@ export class DeskController {
         this.handleApiError(e, 'refresh')
       }
     })
+  }
+
+  /** Once per start: takes over unsynced edits stored under a previous token of this judge. */
+  private async adoptOrphans(session: JudgeSession) {
+    if (this.adoptionDone) return
+    this.adoptionDone = true
+    try {
+      await this.writes
+      const adopted = await adoptOrphans(this.k, session)
+      if (adopted.length === 0) return
+      const rows = { ...this.state.rows }
+      for (const r of adopted) {
+        const key = `${r.team_id}:${r.criterion_id}`
+        if (adoptedWins(rows[key], r)) rows[key] = r
+      }
+      this.set({ rows })
+      toast.info(judgeText.sync.adoptedToast(adopted.length))
+      void this.flush()
+    } catch (e) {
+      console.error('judge: cannot adopt edits of a previous link', e)
+      this.adoptionDone = false
+    }
   }
 
   /** Leaves the revoked screen to retry from scratch. */

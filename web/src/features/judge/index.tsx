@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { judgeText } from '@/i18n/judge'
 import { DeskController } from './controller'
 import { Desk } from './desk'
+import { pendingCount } from './scoring'
 import { FailedScreen, LoadingScreen, NoTokenScreen, RevokedScreen } from './screens'
 import { getStoredToken, setStoredToken } from './storage'
 
@@ -46,7 +47,7 @@ function DeskRoot({ token, onForget }: { token: string; onForget: () => void }) 
     document.title = title ? `${title} — ${judgeText.title}` : judgeText.title
   }, [title])
 
-  if (state.phase === 'revoked') return <RevokedScreen onRecheck={() => controller.recheck()} onForget={onForget} />
+  if (state.phase === 'revoked') return <RevokedScreen unsynced={pendingCount(state.rows)} onRecheck={() => controller.recheck()} onForget={onForget} />
   if (state.phase === 'failed') return <FailedScreen message={state.failure} onRetry={() => controller.recheck()} />
   if (!state.session) return <LoadingScreen />
   return <Desk controller={controller} session={state.session} />

@@ -365,4 +365,4 @@ export interface PublicEventResponse {
 }
 
 // ---- stream ----
-export type ChangeKind = 'scores' | 'status' | 'event' | 'composition' | 'alert' | 'judges'
+export type ChangeKind = 'scores' | 'status' | 'event' | 'composition' | 'alert' | 'judges' | 'presence'

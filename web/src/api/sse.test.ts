@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { createSseParser, parseChangeKind } from './sse'
 
 describe('createSseParser', () => {
+  it('parses the presence kind', () => {
+    expect(parseChangeKind({ event: 'change', data: '{"kind":"presence"}' })).toBe('presence')
+  })
+
   it('parses a change message and ignores keep-alive comments', () => {
     const push = createSseParser()
     const msgs = push(': keepalive\n\nevent: change\ndata: {"kind":"scores"}\n\n')

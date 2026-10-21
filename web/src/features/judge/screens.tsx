@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link2Off, ShieldAlert, WifiOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -21,15 +22,34 @@ export function NoTokenScreen() {
   return <Centered icon={<Link2Off />} title={judgeText.noToken.title} text={judgeText.noToken.text} />
 }
 
-export function RevokedScreen({ onRecheck, onForget }: { onRecheck: () => void; onForget: () => void }) {
+export function RevokedScreen({ unsynced, onRecheck, onForget }: { unsynced: number; onRecheck: () => void; onForget: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+  const t = judgeText.revoked
+  const warning = unsynced > 0 ? `${t.unsynced(unsynced)} ${t.forgetWarning}` : ''
   return (
-    <Centered icon={<ShieldAlert />} title={judgeText.revoked.title} text={judgeText.revoked.text}>
-      <Button variant="outline" onClick={onRecheck}>
-        {judgeText.revoked.recheck}
-      </Button>
-      <Button variant="ghost" onClick={onForget}>
-        {judgeText.revoked.forget}
-      </Button>
+    <Centered icon={<ShieldAlert />} title={t.title} text={t.text}>
+      {confirming ? (
+        <>
+          <p role="alert" className="w-full text-sm font-medium text-destructive">
+            {warning}
+          </p>
+          <Button variant="destructive" onClick={onForget}>
+            {t.forgetConfirm}
+          </Button>
+          <Button variant="outline" onClick={() => setConfirming(false)}>
+            {t.forgetCancel}
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button variant="outline" onClick={onRecheck}>
+            {t.recheck}
+          </Button>
+          <Button variant="ghost" onClick={unsynced > 0 ? () => setConfirming(true) : onForget}>
+            {t.forget}
+          </Button>
+        </>
+      )}
     </Centered>
   )
 }

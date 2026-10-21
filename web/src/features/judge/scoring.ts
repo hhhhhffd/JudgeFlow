@@ -91,14 +91,12 @@ export function mergeServer(rows: Rows, server: JudgeScoreRecord[]): Rows {
       next[k] = local
       continue
     }
-    next[k] = {
-      team_id: s.team_id,
-      criterion_id: s.criterion_id,
-      value_x100: s.value_x100,
-      note: s.note ?? '',
-      edited_at: s.edited_at,
-      dirty: false,
-    }
+    const note = s.note ?? ''
+    // Reusing the object keeps unchanged rows out of diffRows, so a refresh does not rewrite IndexedDB.
+    next[k] =
+      local && local.value_x100 === s.value_x100 && local.note === note && local.edited_at === s.edited_at && !local.error
+        ? local
+        : { team_id: s.team_id, criterion_id: s.criterion_id, value_x100: s.value_x100, note, edited_at: s.edited_at, dirty: false }
   }
   return next
 }
@@ -195,16 +193,49 @@ export function applyResults(rows: Rows, sent: ScoreItem[], results: ScoreResult
   return out
 }
 
+/** A row removed from memory; edited_at is the version being removed (see canDeleteStored). */
+export interface RowRef {
+  team_id: string
+  criterion_id: string
+  edited_at: number
+}
+
 /** Rows that differ between two snapshots, for persistence. */
 export function diffRows(prev: Rows, next: Rows): {
   upserts: LocalRow[]
-  deletes: { team_id: string; criterion_id: string }[]
+  deletes: RowRef[]
 } {
   const upserts: LocalRow[] = []
-  const deletes: { team_id: string; criterion_id: string }[] = []
+  const deletes: RowRef[] = []
   for (const [k, row] of Object.entries(next)) if (prev[k] !== row) upserts.push(row)
-  for (const [k, row] of Object.entries(prev)) if (!(k in next)) deletes.push({ team_id: row.team_id, criterion_id: row.criterion_id })
+  for (const [k, row] of Object.entries(prev)) if (!(k in next)) deletes.push({ team_id: row.team_id, criterion_id: row.criterion_id, edited_at: row.edited_at })
   return { upserts, deletes }
+}
+
+// ---- multi-tab write guard and token adoption ----
+
+/**
+ * Several tabs share one IndexedDB. A tab must never replace a dirty stored row
+ * that is newer than the version it is writing (it holds an unsynced edit made elsewhere).
+ */
+export const canOverwriteStored = (stored: LocalRow | undefined, incoming: { edited_at: number }) =>
+  !(stored?.dirty && stored.edited_at > incoming.edited_at)
+
+/** Same rule for removals: only the version this tab saw may be deleted. */
+export const canDeleteStored = canOverwriteStored
+
+/** An unsynced row carried over from an old token wins only against an older (or missing) row. */
+export const adoptedWins = (existing: LocalRow | undefined, adopted: LocalRow) => !existing || adopted.edited_at > existing.edited_at
+
+export interface CachedIdentity {
+  k: string
+  judge_id: string
+  event_id: string
+}
+
+/** Cache keys of other tokens that belong to the same judge of the same event. */
+export function pickOrphanKeys(current: CachedIdentity, cached: CachedIdentity[]): string[] {
+  return cached.filter((c) => c.k !== current.k && c.judge_id === current.judge_id && c.event_id === current.event_id).map((c) => c.k)
 }
 
 export const pendingCount = (rows: Rows) => Object.values(rows).filter((r) => r.dirty).length

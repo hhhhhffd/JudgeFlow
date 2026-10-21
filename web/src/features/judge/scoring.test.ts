@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Criterion, ScoreItem, ScoreResult, Team } from '@/api/types'
 import {
+  adoptedWins,
   applyEdit,
+  canDeleteStored,
+  canOverwriteStored,
+  pickOrphanKeys,
   applyNote,
   applyResults,
   cellKey,
@@ -84,6 +88,47 @@ describe('mergeServer', () => {
   })
 })
 
+describe('mergeServer reuse', () => {
+  it('keeps the same row object when nothing changed, so persistence skips it', () => {
+    const row = { team_id: 't1', criterion_id: 'c1', value_x100: 700, note: '', edited_at: 50, dirty: false }
+    const rows: Rows = { [k('t1', 'c1')]: row }
+    const server = [{ team_id: 't1', criterion_id: 'c1', value_x100: 700, note: null, edited_at: 50 }]
+    const merged = mergeServer(rows, server)
+    expect(merged[k('t1', 'c1')]).toBe(row)
+    expect(diffRows(rows, merged)).toEqual({ upserts: [], deletes: [] })
+    const changed = mergeServer(rows, [{ ...server[0]!, value_x100: 800 }])
+    expect(diffRows(rows, changed).upserts).toHaveLength(1)
+  })
+})
+
+describe('multi-tab guard', () => {
+  const stored = (edited_at: number, dirty: boolean) => ({ team_id: 't1', criterion_id: 'c1', value_x100: 1, note: '', edited_at, dirty })
+  it('refuses to replace or delete a newer dirty row', () => {
+    expect(canOverwriteStored(stored(20, true), { edited_at: 10 })).toBe(false)
+    expect(canDeleteStored(stored(20, true), { edited_at: 10 })).toBe(false)
+  })
+  it('allows equal/newer writes, clean rows and missing rows', () => {
+    expect(canOverwriteStored(stored(10, true), { edited_at: 10 })).toBe(true)
+    expect(canOverwriteStored(stored(20, false), { edited_at: 10 })).toBe(true)
+    expect(canOverwriteStored(undefined, { edited_at: 10 })).toBe(true)
+  })
+})
+
+describe('token adoption', () => {
+  const id = (key: string, judge_id = 'j1', event_id = 'e1') => ({ k: key, judge_id, event_id })
+  it('picks only other keys of the same judge and event', () => {
+    const cached = [id('new'), id('old'), id('other-judge', 'j2'), id('other-event', 'j1', 'e2')]
+    expect(pickOrphanKeys(id('new'), cached)).toEqual(['old'])
+  })
+  it('an adopted row wins only against an older or missing row', () => {
+    const adopted = { team_id: 't1', criterion_id: 'c1', value_x100: 1, note: '', edited_at: 10, dirty: true }
+    expect(adoptedWins(undefined, adopted)).toBe(true)
+    expect(adoptedWins({ ...adopted, edited_at: 5 }, adopted)).toBe(true)
+    expect(adoptedWins({ ...adopted, edited_at: 10 }, adopted)).toBe(false)
+    expect(adoptedWins({ ...adopted, edited_at: 11, dirty: false }, adopted)).toBe(false)
+  })
+})
+
 describe('outbox', () => {
   it('sends only dirty, non-rejected rows, oldest first; null value carries no note', () => {
     let rows = edit({}, 't1', 'c1', 100, 5)
@@ -162,7 +207,7 @@ describe('outbox', () => {
     expect(diffRows(a, b).upserts).toHaveLength(1)
     const c = edit(a, 't1', 'c1', null, 2)
     const d = applyResults(c, pickBatch(c), [result({ status: 'ok' })]).rows
-    expect(diffRows(c, d).deletes).toEqual([{ team_id: 't1', criterion_id: 'c1' }])
+    expect(diffRows(c, d).deletes).toEqual([{ team_id: 't1', criterion_id: 'c1', edited_at: 2 }])
   })
 })
 

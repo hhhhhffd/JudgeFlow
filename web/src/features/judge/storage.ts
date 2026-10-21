@@ -2,7 +2,7 @@
 // per-judge session cache + score rows (IndexedDB).
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import type { JudgeSession } from '@/api/types'
-import type { LocalRow } from './scoring'
+import { adoptedWins, canDeleteStored, canOverwriteStored, pickOrphanKeys, type LocalRow, type RowRef } from './scoring'
 
 const TOKEN_KEY = 'jf.judge.token'
 const alertKey = (eventId: string) => `jf.judge.alert.${eventId}`
@@ -78,12 +78,46 @@ export async function saveSession(k: string, session: JudgeSession) {
   await (await db()).put('sessions', { k, session, saved_at: Date.now() })
 }
 
-export async function writeRows(k: string, upserts: LocalRow[], deletes: { team_id: string; criterion_id: string }[]) {
+/** Read-compare-write in one transaction, so a concurrent tab's newer unsynced edit is never clobbered. */
+export async function writeRows(k: string, upserts: LocalRow[], deletes: RowRef[]) {
   const d = await db()
   const tx = d.transaction('rows', 'readwrite')
-  await Promise.all([
-    ...upserts.map((r) => tx.store.put({ ...r, k })),
-    ...deletes.map((r) => tx.store.delete([k, r.team_id, r.criterion_id])),
-    tx.done,
-  ])
+  const ops = [
+    ...upserts.map(async (r) => {
+      if (canOverwriteStored(await tx.store.get([k, r.team_id, r.criterion_id]), r)) await tx.store.put({ ...r, k })
+    }),
+    ...deletes.map(async (r) => {
+      const key: [string, string, string] = [k, r.team_id, r.criterion_id]
+      if (canDeleteStored(await tx.store.get(key), r)) await tx.store.delete(key)
+    }),
+  ]
+  await Promise.all([...ops, tx.done])
+}
+
+/** Unsynced rows stored under other tokens of the same judge+event (identity comes from the cached session). */
+export async function adoptOrphans(k: string, session: JudgeSession): Promise<LocalRow[]> {
+  const d = await db()
+  const tx = d.transaction(['sessions', 'rows'], 'readwrite')
+  const cached = (await tx.objectStore('sessions').getAll()).map((c) => ({ k: c.k, judge_id: c.session.judge.id, event_id: c.session.event.id }))
+  const orphans = pickOrphanKeys({ k, judge_id: session.judge.id, event_id: session.event.id }, cached)
+  const adopted: LocalRow[] = []
+  for (const old of orphans) {
+    for (const row of await tx.objectStore('rows').index('byToken').getAll(old)) {
+      if (!row.dirty) continue
+      const local: LocalRow = { team_id: row.team_id, criterion_id: row.criterion_id, value_x100: row.value_x100, note: row.note, edited_at: row.edited_at, dirty: row.dirty, error: row.error }
+      const existing = await tx.objectStore('rows').get([k, local.team_id, local.criterion_id])
+      if (adoptedWins(existing, local)) {
+        await tx.objectStore('rows').put({ ...local, k })
+        adopted.push(local)
+      }
+    }
+    let cursor = await tx.objectStore('rows').index('byToken').openKeyCursor(old)
+    while (cursor) {
+      await tx.objectStore('rows').delete(cursor.primaryKey)
+      cursor = await cursor.continue()
+    }
+    await tx.objectStore('sessions').delete(old)
+  }
+  await tx.done
+  return adopted
 }
