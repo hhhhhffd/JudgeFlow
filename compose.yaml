@@ -1,0 +1,28 @@
+services:
+  judgeflow:
+    build: .
+    image: judgeflow:local
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - judgeflow-data:/data
+    # No healthcheck: the image is `scratch` (no shell, curl or wget) and the binary has no
+    # health subcommand. Use `docker compose logs` / the restart policy instead.
+
+  # Cloudflare Tunnel (HTTPS without opening ports). Uncomment, put TUNNEL_TOKEN in .env,
+  # point the tunnel's public hostname at http://judgeflow:8080 and set JUDGEFLOW_PUBLIC_URL.
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   restart: unless-stopped
+  #   command: tunnel --no-autoupdate run
+  #   environment:
+  #     TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+  #   depends_on:
+  #     - judgeflow
+
+volumes:
+  judgeflow-data:
