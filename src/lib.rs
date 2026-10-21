@@ -6,6 +6,7 @@ pub mod crypto;
 pub mod db;
 pub mod domain;
 pub mod error;
+pub mod pairwise;
 pub mod ranking;
 pub mod rate_limit;
 pub mod routes;
