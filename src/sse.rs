@@ -77,7 +77,10 @@ impl SseHub {
 
     /// SSE response for `event_id` with a 15 s keep-alive. Use it from the admin, public and judge
     /// stream handlers after they have authorized the request.
-    pub fn stream(&self, event_id: &str) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    pub fn stream(
+        &self,
+        event_id: &str,
+    ) -> Sse<impl Stream<Item = Result<Event, Infallible>> + use<>> {
         let receiver = self.subscribe(event_id);
         let mut shutdown = self.shutdown.subscribe();
         let stream = BroadcastStream::new(receiver)

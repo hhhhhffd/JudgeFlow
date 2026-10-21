@@ -14,8 +14,14 @@ use crate::static_files;
 
 pub mod admins;
 pub mod auth;
+pub mod criteria;
+pub mod events;
 pub mod invites;
+pub mod judge;
+pub mod judges;
+pub mod public;
 pub mod setup;
+pub mod teams;
 
 /// Full application: `/api/**` JSON API, everything else embedded static files (SPA).
 pub fn router(state: AppState) -> Router {
@@ -33,6 +39,12 @@ fn api() -> Router<AppState> {
         .merge(auth::router())
         .merge(admins::router())
         .merge(invites::router())
+        .merge(events::router())
+        .merge(teams::router())
+        .merge(criteria::router())
+        .merge(judges::router())
+        .merge(judge::router())
+        .merge(public::router())
         .fallback(api_not_found)
 }
 
