@@ -36,6 +36,11 @@ pub struct Config {
         hide_env_values = true
     )]
     pub secret_key: Option<String>,
+
+    /// Trust `CF-Connecting-IP` / `X-Forwarded-For` for the client IP (rate limiting). Enable only
+    /// behind a reverse proxy or tunnel that sets them; otherwise clients could spoof their IP.
+    #[arg(long, global = true, env = "JUDGEFLOW_TRUST_PROXY")]
+    pub trust_proxy: bool,
 }
 
 impl Config {

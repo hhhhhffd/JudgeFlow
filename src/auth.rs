@@ -1,6 +1,6 @@
 //! Authentication building blocks: admin sessions (cookie), judge tokens (Bearer), extractors.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
 
 use axum::extract::{ConnectInfo, FromRequestParts};
@@ -164,6 +164,7 @@ pub struct JudgeAuth {
     pub event_id: String,
     pub name: String,
     pub submitted_at: Option<i64>,
+    pub token_hash: String,
 }
 
 impl FromRequestParts<AppState> for JudgeAuth {
@@ -179,11 +180,12 @@ impl FromRequestParts<AppState> for JudgeAuth {
         if !scheme.eq_ignore_ascii_case("bearer") || token.trim().is_empty() {
             return Err(AppError::Unauthorized);
         }
+        let token_hash = hash_token(token.trim());
         let row: Option<(String, String, String, Option<i64>)> = sqlx::query_as(
             "SELECT id, event_id, name, submitted_at FROM judges \
              WHERE token_hash = ? AND is_active = 1",
         )
-        .bind(hash_token(token.trim()))
+        .bind(&token_hash)
         .fetch_optional(&state.pool)
         .await?;
         let (judge_id, event_id, name, submitted_at) = row.ok_or(AppError::Unauthorized)?;
@@ -192,24 +194,47 @@ impl FromRequestParts<AppState> for JudgeAuth {
             event_id,
             name,
             submitted_at,
+            token_hash,
         })
     }
 }
 
-/// Client IP for rate limiting (peer address; behind a reverse proxy this is the proxy's).
+/// Client IP for rate limiting. With `JUDGEFLOW_TRUST_PROXY` it comes from `CF-Connecting-IP`,
+/// else the first `X-Forwarded-For` entry; otherwise (or when absent) it is the peer address.
 pub struct ClientIp(pub String);
 
 impl FromRequestParts<AppState> for ClientIp {
     type Rejection = std::convert::Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _: &AppState) -> Result<Self, Self::Rejection> {
-        let ip = parts
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let peer = parts
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(addr)| addr.ip().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        Ok(Self(ip))
+            .map(|ConnectInfo(addr)| addr.ip());
+        Ok(Self(resolve_client_ip(
+            &parts.headers,
+            peer,
+            state.config.trust_proxy,
+        )))
     }
+}
+
+fn resolve_client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust_proxy: bool) -> String {
+    if trust_proxy {
+        let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
+        let forwarded = header("cf-connecting-ip")
+            .or_else(|| header("x-forwarded-for").and_then(|v| v.split(',').next()))
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        if let Some(ip) = forwarded {
+            return ip.to_string();
+        }
+    }
+    peer.map(|ip| ip.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Generates a new TOTP secret for `admin`, invalidates all their sessions, writes the audit entry.
@@ -240,4 +265,41 @@ pub async fn reset_totp(
     .await?;
     tx.commit().await?;
     Ok((fresh.otpauth_uri, fresh.secret))
+}
+
+#[cfg(test)]
+mod client_ip_tests {
+    use super::*;
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, value.parse().unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn peer_only_when_proxy_not_trusted() {
+        let h = headers(&[
+            ("cf-connecting-ip", "1.1.1.1"),
+            ("x-forwarded-for", "2.2.2.2"),
+        ]);
+        let peer = Some("10.0.0.1".parse().unwrap());
+        assert_eq!(resolve_client_ip(&h, peer, false), "10.0.0.1");
+    }
+
+    #[test]
+    fn trusted_proxy_prefers_cloudflare_then_forwarded_for_then_peer() {
+        let peer = Some("10.0.0.1".parse().unwrap());
+        let both = headers(&[
+            ("cf-connecting-ip", "1.1.1.1"),
+            ("x-forwarded-for", "2.2.2.2"),
+        ]);
+        assert_eq!(resolve_client_ip(&both, peer, true), "1.1.1.1");
+        let xff = headers(&[("x-forwarded-for", "2.2.2.2, 3.3.3.3")]);
+        assert_eq!(resolve_client_ip(&xff, peer, true), "2.2.2.2");
+        assert_eq!(resolve_client_ip(&HeaderMap::new(), peer, true), "10.0.0.1");
+        assert_eq!(resolve_client_ip(&HeaderMap::new(), None, true), "unknown");
+    }
 }
