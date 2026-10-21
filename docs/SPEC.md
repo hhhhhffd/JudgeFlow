@@ -142,7 +142,7 @@ Per-judge breakdown is public only when `published` (from the latest snapshot). 
 ## 7. Realtime (SSE)
 
 One `tokio::sync::broadcast` channel per event (created lazily). Messages are invalidation hints, not data:
-`event: change` / `data: {"kind": "scores" | "status" | "event" | "composition" | "alert" | "judges" | "presence"}`.
+`event: change` / `data: {"kind": "scores" | "status" | "event" | "composition" | "alert" | "judges" | "presence" | "stage"}`.
 `presence` is sent only for judge heartbeats (last seen / pending count); judge clients ignore it
 (as well as `scores`), the admin client treats it like `judges`. `judges` is for real judge changes.
 Clients debounce (~500 ms) and refetch the relevant endpoint. Keep-alive comment every 15 s.

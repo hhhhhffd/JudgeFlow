@@ -248,6 +248,48 @@ fn round_half_up(value: &BigRational) -> i64 {
         .expect("scores are bounded by criterion max values and fit in i64")
 }
 
+/// Which ranking rows the stage screen may show (SPEC section 11).
+#[derive(Debug, PartialEq, Eq)]
+pub struct StageSlice {
+    /// Number of reveal units: distinct ranks `<= top_n`.
+    pub total_groups: u32,
+    /// Per input row: whether it is visible.
+    pub visible: Vec<bool>,
+}
+
+/// Decides row visibility for the stage. `ranks` are the rows' ranks in ranking order.
+/// Top-N groups (rows sharing a rank) are revealed from the lowest place up; `revealed` is clamped
+/// to `total_groups`. `leaderboard` always shows rows below the top N and unranked rows,
+/// `podium` only revealed top-N rows, any other view (`waiting`) nothing.
+pub fn stage_slice(ranks: &[Option<u32>], view: &str, top_n: u32, revealed: u32) -> StageSlice {
+    let mut groups: Vec<u32> = ranks
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|r| *r <= top_n)
+        .collect();
+    groups.dedup();
+    let total_groups = groups.len() as u32;
+    let revealed = revealed.min(total_groups) as usize;
+    // Lowest places first: the revealed groups are the last `revealed` entries.
+    let revealed_ranks = &groups[groups.len() - revealed..];
+    let visible = ranks
+        .iter()
+        .map(|rank| match (view, rank) {
+            ("waiting", _) => false,
+            ("leaderboard", None) => true,
+            (_, None) => false,
+            ("leaderboard" | "podium", Some(rank)) if *rank > top_n => view == "leaderboard",
+            ("leaderboard" | "podium", Some(rank)) => revealed_ranks.contains(rank),
+            _ => false,
+        })
+        .collect();
+    StageSlice {
+        total_groups,
+        visible,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,5 +625,56 @@ mod tests {
         let r = compute(&i, Mode::Provisional);
         let back: Ranking = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(back, r);
+    }
+
+    fn some_ranks(values: &[u32]) -> Vec<Option<u32>> {
+        values.iter().map(|r| Some(*r)).collect()
+    }
+
+    #[test]
+    fn stage_groups_by_rank_and_cuts_by_top_n() {
+        // Ranks 1,2,2,4 with top 3: groups {1}, {2,2}; rank 4 is below the cut.
+        let r = some_ranks(&[1, 2, 2, 4]);
+        assert_eq!(stage_slice(&r, "podium", 3, 0).total_groups, 2);
+        assert_eq!(stage_slice(&r, "podium", 3, 0).visible, [false; 4]);
+        assert_eq!(
+            stage_slice(&r, "podium", 3, 1).visible,
+            [false, true, true, false]
+        );
+        assert_eq!(
+            stage_slice(&r, "podium", 3, 2).visible,
+            [true, true, true, false]
+        );
+        // Revealed beyond the total is clamped.
+        assert_eq!(
+            stage_slice(&r, "podium", 3, 99),
+            stage_slice(&r, "podium", 3, 2)
+        );
+    }
+
+    #[test]
+    fn stage_leaderboard_always_shows_rows_below_top_n_and_unranked() {
+        let r = vec![Some(1), Some(2), Some(4), None];
+        assert_eq!(
+            stage_slice(&r, "leaderboard", 2, 0).visible,
+            [false, false, true, true]
+        );
+        assert_eq!(
+            stage_slice(&r, "leaderboard", 2, 1).visible,
+            [false, true, true, true]
+        );
+        assert_eq!(
+            stage_slice(&r, "podium", 2, 2).visible,
+            [true, true, false, false]
+        );
+    }
+
+    #[test]
+    fn stage_waiting_shows_nothing_and_handles_empty() {
+        assert_eq!(
+            stage_slice(&some_ranks(&[1, 2]), "waiting", 3, 2).visible,
+            [false; 2]
+        );
+        assert_eq!(stage_slice(&[], "podium", 3, 0).total_groups, 0);
     }
 }

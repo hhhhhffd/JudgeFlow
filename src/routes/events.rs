@@ -20,7 +20,7 @@ use crate::domain::{
     load_teams,
 };
 use crate::error::{AppError, AppResult};
-use crate::ranking::Mode;
+use crate::ranking::{Mode, stage_slice};
 use crate::sse::ChangeKind;
 use crate::state::AppState;
 use crate::util::{new_id, now_ms};
@@ -32,6 +32,7 @@ const LABEL_MAX: usize = 100;
 const ALERT_TITLE_MAX: usize = 200;
 const ALERT_BUTTON_MAX: usize = 50;
 const QUORUM_MAX: i64 = 1000;
+pub const STAGE_TOP_N_MAX: i64 = 10;
 pub const BACKGROUND_MAX_BYTES: usize = 5 * 1024 * 1024;
 
 pub fn router() -> Router<AppState> {
@@ -39,6 +40,7 @@ pub fn router() -> Router<AppState> {
         .route("/events", get(list).post(create))
         .route("/events/{id}", get(get_one).patch(patch).delete(delete))
         .route("/events/{id}/transition", post(transition))
+        .route("/events/{id}/stage/reveal", post(stage_reveal))
         .route(
             "/events/{id}/background",
             put(put_background)
@@ -172,6 +174,8 @@ struct PatchRequest {
     overlay_enabled: Option<bool>,
     overlay_color: Option<String>,
     overlay_opacity: Option<i64>,
+    stage_view: Option<String>,
+    stage_top_n: Option<i64>,
 }
 
 fn is_hex_color(value: &str) -> bool {
@@ -328,13 +332,39 @@ async fn patch(
         changed.push("overlay_opacity");
     }
 
+    let mut stage_touched = false;
+    if let Some(view) = &req.stage_view {
+        if !matches!(view.as_str(), "waiting" | "leaderboard" | "podium") {
+            return Err(AppError::Validation(
+                "Вид сцены: waiting, leaderboard или podium".into(),
+            ));
+        }
+        event.stage_view = view.clone();
+        changed.push("stage_view");
+        stage_touched = true;
+    }
+    if let Some(top_n) = req.stage_top_n {
+        if !(1..=STAGE_TOP_N_MAX).contains(&top_n) {
+            return Err(AppError::Validation(format!(
+                "Число призовых мест: от 1 до {STAGE_TOP_N_MAX}"
+            )));
+        }
+        if top_n != current.stage_top_n {
+            event.stage_top_n = top_n;
+            event.stage_revealed = 0;
+        }
+        changed.push("stage_top_n");
+        stage_touched = true;
+    }
+
     event.updated_at = now_ms();
     sqlx::query(
         "UPDATE events SET title = ?, description = ?, starts_at = ?, location = ?, scoring_mode = ?, \
          notes_enabled = ?, visibility = ?, quorum = ?, teams_label = ?, teams_label_enabled = ?, \
          criteria_label = ?, criteria_label_enabled = ?, alert_enabled = ?, alert_title = ?, \
          alert_text = ?, alert_align = ?, alert_button_text = ?, alert_version = ?, \
-         overlay_enabled = ?, overlay_color = ?, overlay_opacity = ?, updated_at = ? WHERE id = ?",
+         overlay_enabled = ?, overlay_color = ?, overlay_opacity = ?, stage_view = ?, stage_top_n = ?, \
+         stage_revealed = ?, updated_at = ? WHERE id = ?",
     )
     .bind(&event.title)
     .bind(&event.description)
@@ -357,6 +387,9 @@ async fn patch(
     .bind(event.overlay_enabled)
     .bind(&event.overlay_color)
     .bind(event.overlay_opacity)
+    .bind(&event.stage_view)
+    .bind(event.stage_top_n)
+    .bind(event.stage_revealed)
     .bind(event.updated_at)
     .bind(&id)
     .execute(&mut *tx)
@@ -375,6 +408,9 @@ async fn patch(
     state.sse.notify(&id, ChangeKind::Event);
     if alert_touched {
         state.sse.notify(&id, ChangeKind::Alert);
+    }
+    if stage_touched {
+        state.sse.notify(&id, ChangeKind::Stage);
     }
     Ok(Json(full))
 }
@@ -530,6 +566,61 @@ async fn transition(
     let full = event_full(&mut tx, &id).await?;
     tx.commit().await?;
     state.sse.notify(&id, ChangeKind::Status);
+    Ok(Json(full))
+}
+
+#[derive(Deserialize)]
+struct RevealRequest {
+    action: String,
+}
+
+async fn stage_reveal(
+    State(state): State<AppState>,
+    session: AdminSession,
+    Path(id): Path<String>,
+    Json(req): Json<RevealRequest>,
+) -> AppResult<Json<Value>> {
+    if !matches!(req.action.as_str(), "next" | "prev" | "reset" | "all") {
+        return Err(AppError::Validation(
+            "Действие: next, prev, reset или all".into(),
+        ));
+    }
+    let mut tx = begin_write(&state.pool).await?;
+    let event = load_event(&mut tx, &id).await?;
+    if !domain::is_closed(&event.status) {
+        return Err(AppError::InvalidState(
+            "Сцена доступна только после утверждения результатов".into(),
+            None,
+        ));
+    }
+    let (ranking, _) = domain::resolve_ranking(&mut tx, &event, Mode::Official).await?;
+    let ranks: Vec<_> = ranking.rows.iter().map(|row| row.rank).collect();
+    let total = stage_slice(&ranks, "podium", event.stage_top_n as u32, 0).total_groups as i64;
+    // A stored value above `total` (ranking changed after re-finalizing) is clamped first.
+    let current = event.stage_revealed.min(total);
+    let revealed = match req.action.as_str() {
+        "next" => (current + 1).min(total),
+        "prev" => (current - 1).max(0),
+        "reset" => 0,
+        _ => total,
+    };
+    sqlx::query("UPDATE events SET stage_revealed = ?, updated_at = ? WHERE id = ?")
+        .bind(revealed)
+        .bind(now_ms())
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut *tx,
+        Some(&id),
+        Some(&session.admin.id),
+        "event.stage_reveal",
+        json!({ "action": req.action, "from": event.stage_revealed, "to": revealed }),
+    )
+    .await?;
+    let full = event_full(&mut tx, &id).await?;
+    tx.commit().await?;
+    state.sse.notify(&id, ChangeKind::Stage);
     Ok(Json(full))
 }
 

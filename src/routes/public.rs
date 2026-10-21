@@ -11,13 +11,14 @@ use serde_json::{Value, json};
 
 use crate::domain::{self, Event, load_criteria, load_event};
 use crate::error::{AppError, AppResult};
-use crate::ranking::Mode;
+use crate::ranking::{Mode, stage_slice};
 use crate::routes::events::upload_path;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/public/events/{id}", get(public_event))
+        .route("/public/events/{id}/stage", get(public_stage))
         .route("/public/events/{id}/stream", get(stream))
         .route("/public/events/{id}/background", get(background))
 }
@@ -80,6 +81,76 @@ async fn public_event(
         event_json["criteria"] = json!(criteria);
     }
     Ok(Json(json!({ "event": event_json, "results": results })))
+}
+
+/// Stage screen (SPEC section 11): official ranking with unrevealed rows removed server-side
+/// and no per-judge data.
+async fn public_stage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let mut conn = state.pool.acquire().await?;
+    let event = load_public(&mut conn, &id).await?;
+    let available = domain::is_closed(&event.status);
+    let top_n = event.stage_top_n as u32;
+
+    let mut total_groups = 0;
+    let mut revealed = 0;
+    let mut rows: Vec<Value> = Vec::new();
+    if available {
+        let (ranking, _) = domain::resolve_ranking(&mut conn, &event, Mode::Official).await?;
+        let ranks: Vec<_> = ranking.rows.iter().map(|row| row.rank).collect();
+        let slice = stage_slice(
+            &ranks,
+            &event.stage_view,
+            top_n,
+            event.stage_revealed as u32,
+        );
+        total_groups = slice.total_groups;
+        revealed = (event.stage_revealed as u32).min(total_groups);
+        let mut json = domain::ranking_json(&mut conn, &id, &ranking).await?;
+        if let Some(all_rows) = json["rows"].as_array_mut() {
+            rows = std::mem::take(all_rows)
+                .into_iter()
+                .zip(slice.visible)
+                .filter(|(_, visible)| *visible)
+                .map(|(mut row, _)| {
+                    row.as_object_mut()
+                        .expect("row is an object")
+                        .remove("judges");
+                    row
+                })
+                .collect();
+        }
+    }
+
+    let criteria: Vec<Value> = load_criteria(&mut conn, &id)
+        .await?
+        .into_iter()
+        .map(|c| json!({ "id": c.id, "name": c.name }))
+        .collect();
+    Ok(Json(json!({
+        "event": {
+            "id": event.id,
+            "title": event.title,
+            "status": event.status,
+            "teams_label": event.teams_label,
+            "teams_label_enabled": event.teams_label_enabled,
+            "criteria_label": event.criteria_label,
+            "criteria_label_enabled": event.criteria_label_enabled,
+            "background_url": event.background_url(),
+            "overlay": event.overlay_json(),
+            "criteria": criteria,
+        },
+        "stage": {
+            "view": event.stage_view,
+            "top_n": event.stage_top_n,
+            "revealed": revealed,
+            "total_groups": total_groups,
+            "available": available,
+        },
+        "rows": rows,
+    })))
 }
 
 async fn stream(

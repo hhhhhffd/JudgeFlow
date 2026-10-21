@@ -25,9 +25,11 @@ pub enum ChangeKind {
     Judges,
     /// Judge heartbeat only (last seen / pending count); judge clients ignore it.
     Presence,
+    /// Stage Mode view, top N or reveal progress changed.
+    Stage,
 }
 
-const ALL_KINDS: [ChangeKind; 7] = [
+const ALL_KINDS: [ChangeKind; 8] = [
     ChangeKind::Scores,
     ChangeKind::Status,
     ChangeKind::Event,
@@ -35,6 +37,7 @@ const ALL_KINDS: [ChangeKind; 7] = [
     ChangeKind::Alert,
     ChangeKind::Judges,
     ChangeKind::Presence,
+    ChangeKind::Stage,
 ];
 
 /// One lazily created broadcast channel per event.

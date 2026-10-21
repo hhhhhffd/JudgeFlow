@@ -37,6 +37,9 @@ pub struct Event {
     pub overlay_enabled: bool,
     pub overlay_color: String,
     pub overlay_opacity: i64,
+    pub stage_view: String,
+    pub stage_top_n: i64,
+    pub stage_revealed: i64,
     pub locked_at: Option<i64>,
     #[serde(skip)]
     pub created_by: Option<String>,
