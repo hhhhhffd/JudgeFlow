@@ -202,3 +202,14 @@ Routes: `/firststart`, `/login`, `/invite/:token`, `/` (events), `/events/:id/*`
 - **Control Room**: event list; event page with sections: setup (wizard: basics → teams (paste from clipboard, one per line, optional `name<TAB>description`) → criteria → judges (links + QR, printable sheet) → settings), monitoring (KPIs + judges × teams matrix: green submitted, yellow partial/unsubmitted, grey not started, red inactive/pending sync), results (provisional/official, tie markers), lifecycle controls with confirmations and reasons, alert editor, appearance (background/overlay), audit log.
 - **Live page**: leaderboard with background/overlay, realtime via SSE.
 - Heavy code (Control Room, QR) is lazy-loaded; the judge bundle stays small.
+
+## 10. Resolved details
+
+- Every ranking row returned by any API (admin and public) carries `team_name`.
+- `GET /api/events/:id/results?mode=…` → `Ranking` (rows with `team_name`) plus `snapshot?: {id, created_at, created_by}`.
+  When the event is `finalized`/`published` and `mode=official`, the ranking is the latest snapshot's payload, not a recomputation.
+- `GET /api/public/events/:id` includes `event.criteria: [{id, name}]` whenever per-criterion data is visible.
+- Mutation responses: create/update of a team, criterion or judge returns that object; `bulk` returns the created array;
+  `PUT …/order` and `DELETE` return `204`. Judge `PATCH`/`reopen` return the judge summary.
+- Status codes: wrong TOTP code → `401 unauthorized`; rate limit → `429 rate_limited`; duplicate admin name → `409 conflict`.
+- Invite list items never contain the URL — it is shown once on creation.
