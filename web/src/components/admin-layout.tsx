@@ -46,7 +46,7 @@ export function AdminLayout() {
           </nav>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" aria-label={ru.nav.account}>
+              <Button variant="ghost" size="sm" aria-label={`${admin.name}, ${ru.nav.account.toLowerCase()}`}>
                 <span className="max-w-20 truncate sm:max-w-28">{admin.name}</span>
                 <ChevronDown />
               </Button>

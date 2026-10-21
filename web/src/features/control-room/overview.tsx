@@ -92,7 +92,7 @@ function Monitoring() {
           <div key={t.label} className="rounded-xl border bg-card p-4">
             <dt className="text-xs text-muted-foreground">{t.label}</dt>
             <dd className={cn('num mt-1 font-mono text-2xl font-medium', t.warn && 'text-destructive')}>{t.value}</dd>
-            {t.hint && <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{t.hint}</p>}
+            {t.hint && <dd className="mt-1 text-[11px] leading-tight text-muted-foreground">{t.hint}</dd>}
           </div>
         ))}
       </dl>

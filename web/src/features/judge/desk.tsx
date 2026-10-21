@@ -316,7 +316,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
             <ChevronLeft />
             {judgeText.nav.back}
           </Button>
-          <Button variant="ghost" size="lg" className="num h-12 px-3" onClick={() => setQueueOpen(true)} aria-label={judgeText.queue.open}>
+          <Button variant="ghost" size="lg" className="num h-12 px-3" onClick={() => setQueueOpen(true)} aria-label={`${itemIndex + 1}/${items.length}, ${judgeText.queue.open.toLowerCase()}`}>
             <ListChecks />
             {itemIndex + 1}/{items.length}
           </Button>

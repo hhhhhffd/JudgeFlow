@@ -155,7 +155,7 @@ export const judgeText = {
     question: 'Кто сильнее?',
     teamA: 'Команда А',
     teamB: 'Команда Б',
-    chooseA: (name: string) => `Сильнее: ${name}`,
+    chooseLead: 'Сильнее: ',
     tie: 'Ничья',
     tieHint: 'Команды примерно равны',
     noDescription: 'Описания нет',

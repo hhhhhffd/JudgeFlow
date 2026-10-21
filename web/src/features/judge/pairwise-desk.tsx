@@ -177,7 +177,7 @@ export function PairwiseDesk({ controller, session }: { controller: DeskControll
                 </p>
               )}
               <nav className="flex items-center justify-between gap-2 border-t pt-4" aria-label={t.position(index + 1, list.length)}>
-                <Button variant="ghost" onClick={() => go(-1)} disabled={index <= 0}>
+                <Button variant="ghost" onClick={() => go(-1)} disabled={index <= 0} aria-label={t.back}>
                   <ChevronLeft />
                   <span className="hidden sm:inline">{t.back}</span>
                 </Button>
@@ -190,7 +190,7 @@ export function PairwiseDesk({ controller, session }: { controller: DeskControll
                     </Button>
                   )}
                 </div>
-                <Button variant="ghost" onClick={() => go(1)} disabled={index >= list.length - 1}>
+                <Button variant="ghost" onClick={() => go(1)} disabled={index >= list.length - 1} aria-label={t.forward}>
                   <span className="hidden sm:inline">{t.forward}</span>
                   <ChevronRight />
                 </Button>
@@ -253,7 +253,6 @@ function TeamCard({
       type="button"
       disabled={disabled}
       aria-pressed={selected}
-      aria-label={t.chooseA(name)}
       onClick={onPick}
       className={cn(
         'group flex min-h-48 flex-col gap-3 rounded-2xl border bg-card/95 p-5 text-left shadow-xs backdrop-blur-sm transition-[border-color,background-color,box-shadow,transform,opacity] duration-150 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 enabled:active:scale-[0.99] disabled:cursor-not-allowed lg:min-h-72 lg:p-8',
@@ -262,7 +261,8 @@ function TeamCard({
         dimmed && 'opacity-60',
       )}
     >
-      <span className="flex items-center justify-between gap-3">
+      <span className="sr-only">{t.chooseLead}</span>
+      <span aria-hidden className="flex items-center justify-between gap-3">
         <span className={cn('flex size-9 items-center justify-center rounded-full bg-secondary text-base font-semibold', selected && 'bg-primary text-primary-foreground')}>{letter}</span>
         <kbd className="hidden rounded border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground lg:inline">{hotkey}</kbd>
       </span>
