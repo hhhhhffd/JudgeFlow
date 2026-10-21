@@ -3,17 +3,20 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sqlx::SqliteConnection;
 
-use crate::auth::JudgeAuth;
+use crate::audit;
+use crate::auth::{AdminSession, JudgeAuth};
+use crate::crypto::hash_token;
 use crate::db::begin_write;
-use crate::domain::{load_criteria, load_event, load_teams};
+use crate::domain::{self, Event, Layout, load_event};
 use crate::error::{AppError, AppResult};
 use crate::sse::ChangeKind;
 use crate::state::AppState;
@@ -23,6 +26,9 @@ const NOTE_MAX_CHARS: usize = 2000;
 const ITEMS_MAX: usize = 5000;
 /// Client clocks are trusted, but not blindly: a timestamp far in the future would block later edits.
 const MAX_CLOCK_SKEW_MS: i64 = 24 * 60 * 60 * 1000;
+/// Emergency sheet files carry up to `ITEMS_MAX` items plus notes.
+const SHEET_MAX_BYTES: usize = 2 * 1024 * 1024;
+const SHEET_FORMAT: &str = "judgeflow-sheet/1";
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -32,13 +38,31 @@ pub fn router() -> Router<AppState> {
         .route("/judge/unsubmit", post(unsubmit))
         .route("/judge/heartbeat", post(heartbeat))
         .route("/judge/stream", get(stream))
+        .route(
+            "/events/{id}/import-sheet",
+            post(import_sheet).layer(DefaultBodyLimit::max(SHEET_MAX_BYTES)),
+        )
 }
 
 async fn session(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<Json<Value>> {
     let mut conn = state.pool.acquire().await?;
     let event = load_event(&mut conn, &auth.event_id).await?;
-    let teams = load_teams(&mut conn, &event.id).await?;
-    let criteria = load_criteria(&mut conn, &event.id).await?;
+    let layout = Layout::load(&mut conn, &event.id).await?;
+    let teams = layout.judge_teams(&auth.judge_id);
+    let criteria: Vec<_> = layout
+        .criteria
+        .iter()
+        .filter(|c| teams.iter().any(|t| layout.applies(&t.id, c)))
+        .collect();
+    let tracks: Vec<_> = layout
+        .tracks
+        .iter()
+        .filter(|track| {
+            teams
+                .iter()
+                .any(|t| t.track_id.as_deref() == Some(track.id.as_str()))
+        })
+        .collect();
     let submitted_at: Option<i64> =
         sqlx::query_scalar("SELECT submitted_at FROM judges WHERE id = ?")
             .bind(&auth.judge_id)
@@ -51,8 +75,16 @@ async fn session(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<Js
     .bind(&auth.judge_id)
     .fetch_all(&mut *conn)
     .await?;
+    let required: HashSet<(&str, &str)> = layout
+        .required(&auth.judge_id)
+        .into_iter()
+        .map(|(team, criterion)| (team.id.as_str(), criterion.id.as_str()))
+        .collect();
     let scores: Vec<Value> = scores
         .into_iter()
+        .filter(|(team_id, criterion_id, ..)| {
+            required.contains(&(team_id.as_str(), criterion_id.as_str()))
+        })
         .map(|(team_id, criterion_id, value_x100, note, edited_at)| {
             json!({
                 "team_id": team_id, "criterion_id": criterion_id,
@@ -80,6 +112,7 @@ async fn session(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<Js
         },
         "teams": teams,
         "criteria": criteria,
+        "tracks": tracks,
         "scores": scores,
     })))
 }
@@ -111,12 +144,7 @@ async fn put_scores(
     auth: JudgeAuth,
     Json(req): Json<ScoresRequest>,
 ) -> AppResult<Json<Value>> {
-    if req.items.len() > ITEMS_MAX {
-        return Err(AppError::Validation(format!(
-            "Не более {ITEMS_MAX} оценок за один запрос"
-        )));
-    }
-    let now = now_ms();
+    check_items_count(&req.items)?;
     let mut tx = begin_write(&state.pool).await?;
     // Re-read judge and event inside the write lock: closing the event, submitting and
     // reopening are serialized with this batch.
@@ -129,20 +157,44 @@ async fn put_scores(
         return Err(AppError::Unauthorized);
     };
     let event = load_event(&mut tx, &auth.event_id).await?;
-    let teams: HashSet<String> = load_teams(&mut tx, &event.id)
-        .await?
-        .into_iter()
-        .map(|t| t.id)
-        .collect();
-    let criteria: HashMap<String, (i64, i64)> = load_criteria(&mut tx, &event.id)
-        .await?
-        .into_iter()
-        .map(|c| (c.id, (c.max_x100, c.step_x100)))
-        .collect();
+    let (results, applied) =
+        apply_score_items(&mut tx, &event, &auth.judge_id, submitted_at, &req.items).await?;
+    tx.commit().await?;
+    if applied {
+        state.sse.notify(&event.id, ChangeKind::Scores);
+    }
+    Ok(Json(json!({ "results": results })))
+}
 
-    let mut results = Vec::with_capacity(req.items.len());
+fn check_items_count(items: &[ScoreItem]) -> AppResult<()> {
+    if items.len() > ITEMS_MAX {
+        return Err(AppError::Validation(format!(
+            "Не более {ITEMS_MAX} оценок за один запрос"
+        )));
+    }
+    Ok(())
+}
+
+/// Applies a batch of score items for one judge inside the caller's write transaction. Shared by
+/// `PUT /judge/scores` and the emergency sheet import so both follow exactly the same rules
+/// (submitted sheet, status window, assignments, validation, last-writer-wins).
+/// Returns the per-item results and whether anything was written.
+async fn apply_score_items(
+    tx: &mut SqliteConnection,
+    event: &Event,
+    judge_id: &str,
+    submitted_at: Option<i64>,
+    items: &[ScoreItem],
+) -> AppResult<(Vec<Value>, bool)> {
+    let now = now_ms();
+    let layout = Layout::load(&mut *tx, &event.id).await?;
+    let criteria: HashMap<&str, &domain::Criterion> =
+        layout.criteria.iter().map(|c| (c.id.as_str(), c)).collect();
+    let teams: HashSet<&str> = layout.teams.iter().map(|t| t.id.as_str()).collect();
+
+    let mut results = Vec::with_capacity(items.len());
     let mut applied = false;
-    for item in &req.items {
+    for item in items {
         if submitted_at.is_some() {
             results.push(rejection(item, "sheet_submitted"));
             continue;
@@ -158,14 +210,19 @@ async fn put_scores(
             results.push(rejection(item, "invalid_state"));
             continue;
         }
-        let Some(&(max, step)) = criteria.get(&item.criterion_id) else {
+        let Some(&criterion) = criteria.get(item.criterion_id.as_str()) else {
             results.push(rejection(item, "not_found"));
             continue;
         };
-        if !teams.contains(&item.team_id) {
+        if !teams.contains(item.team_id.as_str()) {
             results.push(rejection(item, "not_found"));
             continue;
         }
+        if !layout.is_required(judge_id, &item.team_id, criterion) {
+            results.push(rejection(item, "not_assigned"));
+            continue;
+        }
+        let (max, step) = (criterion.max_x100, criterion.step_x100);
         let note = item
             .note
             .as_deref()
@@ -188,7 +245,7 @@ async fn put_scores(
             "SELECT value_x100, note, edited_at FROM scores \
              WHERE judge_id = ? AND team_id = ? AND criterion_id = ?",
         )
-        .bind(&auth.judge_id)
+        .bind(judge_id)
         .bind(&item.team_id)
         .bind(&item.criterion_id)
         .fetch_optional(&mut *tx)
@@ -212,7 +269,7 @@ async fn put_scores(
                      value_x100 = excluded.value_x100, note = excluded.note, \
                      edited_at = excluded.edited_at, updated_at = excluded.updated_at",
                 )
-                .bind(&auth.judge_id)
+                .bind(judge_id)
                 .bind(&item.team_id)
                 .bind(&item.criterion_id)
                 .bind(value)
@@ -231,7 +288,7 @@ async fn put_scores(
                      value_x100 = NULL, note = NULL, \
                      edited_at = excluded.edited_at, updated_at = excluded.updated_at",
                 )
-                .bind(&auth.judge_id)
+                .bind(judge_id)
                 .bind(&item.team_id)
                 .bind(&item.criterion_id)
                 .bind(item.edited_at)
@@ -245,9 +302,70 @@ async fn put_scores(
             "team_id": item.team_id, "criterion_id": item.criterion_id, "status": "ok",
         }));
     }
+    Ok((results, applied))
+}
+
+#[derive(Deserialize)]
+struct SheetFile {
+    format: String,
+    token: String,
+    items: Vec<ScoreItem>,
+}
+
+/// Emergency import (SPEC section 12): the organizer uploads a sheet file exported by a judge.
+/// The token must belong to a judge of this event (inactive judges are fine); the items go
+/// through the same function as `PUT /judge/scores`. The token is never logged or audited.
+async fn import_sheet(
+    State(state): State<AppState>,
+    session: AdminSession,
+    Path(event_id): Path<String>,
+    Json(req): Json<SheetFile>,
+) -> AppResult<Json<Value>> {
+    if req.format != SHEET_FORMAT {
+        return Err(AppError::Validation(
+            "Неизвестный формат файла листа".into(),
+        ));
+    }
+    check_items_count(&req.items)?;
+    let mut tx = begin_write(&state.pool).await?;
+    let event = load_event(&mut tx, &event_id).await?;
+    if domain::is_closed(&event.status) {
+        return Err(AppError::InvalidState(
+            "Импорт листа недоступен после завершения оценивания".into(),
+            None,
+        ));
+    }
+    let judge: Option<(String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT id, name, submitted_at FROM judges WHERE token_hash = ? AND event_id = ?",
+    )
+    .bind(hash_token(req.token.trim()))
+    .bind(&event_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (judge_id, judge_name, submitted_at) = judge.ok_or_else(|| {
+        AppError::Validation("Токен из файла не относится к судьям этого события".into())
+    })?;
+    let (results, applied) =
+        apply_score_items(&mut tx, &event, &judge_id, submitted_at, &req.items).await?;
+    let count = |status: &str| results.iter().filter(|r| r["status"] == status).count();
+    audit::record(
+        &mut *tx,
+        Some(&event_id),
+        Some(&session.admin.id),
+        "judge.sheet_import",
+        json!({
+            "judge_id": judge_id,
+            "judge_name": judge_name,
+            "items": results.len(),
+            "ok": count("ok"),
+            "stale": count("stale"),
+            "rejected": count("rejected"),
+        }),
+    )
+    .await?;
     tx.commit().await?;
     if applied {
-        state.sse.notify(&event.id, ChangeKind::Scores);
+        state.sse.notify(&event_id, ChangeKind::Scores);
     }
     Ok(Json(json!({ "results": results })))
 }
@@ -282,16 +400,13 @@ async fn submit(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<Jso
     .await?
     .into_iter()
     .collect();
-    let teams = load_teams(&mut tx, &event.id).await?;
-    let criteria = load_criteria(&mut tx, &event.id).await?;
-    let mut missing = Vec::new();
-    for team in &teams {
-        for criterion in &criteria {
-            if !scored.contains(&(team.id.clone(), criterion.id.clone())) {
-                missing.push(json!({ "team_id": team.id, "criterion_id": criterion.id }));
-            }
-        }
-    }
+    let layout = Layout::load(&mut tx, &event.id).await?;
+    let missing: Vec<Value> = layout
+        .required(&auth.judge_id)
+        .into_iter()
+        .filter(|(team, criterion)| !scored.contains(&(team.id.clone(), criterion.id.clone())))
+        .map(|(team, criterion)| json!({ "team_id": team.id, "criterion_id": criterion.id }))
+        .collect();
     if !missing.is_empty() {
         return Err(AppError::InvalidState(
             "Не все оценки выставлены".into(),

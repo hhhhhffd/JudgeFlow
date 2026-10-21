@@ -76,7 +76,7 @@ async fn public_event(
         let criteria: Vec<Value> = load_criteria(&mut conn, &id)
             .await?
             .into_iter()
-            .map(|c| json!({ "id": c.id, "name": c.name }))
+            .map(|c| json!({ "id": c.id, "name": c.name, "track_id": c.track_id }))
             .collect();
         event_json["criteria"] = json!(criteria);
     }
@@ -99,6 +99,7 @@ async fn public_stage(
     let mut rows: Vec<Value> = Vec::new();
     if available {
         let (ranking, _) = domain::resolve_ranking(&mut conn, &event, Mode::Official).await?;
+        let ranking = domain::stage_group(ranking, &event.stage_track_id);
         let ranks: Vec<_> = ranking.rows.iter().map(|row| row.rank).collect();
         let slice = stage_slice(
             &ranks,
@@ -124,10 +125,17 @@ async fn public_stage(
         }
     }
 
+    // Only the criteria of the shown group: track-less ones plus those of the stage track.
     let criteria: Vec<Value> = load_criteria(&mut conn, &id)
         .await?
         .into_iter()
-        .map(|c| json!({ "id": c.id, "name": c.name }))
+        .filter(|c| c.track_id.is_none() || c.track_id == event.stage_track_id)
+        .map(|c| json!({ "id": c.id, "name": c.name, "track_id": c.track_id }))
+        .collect();
+    let tracks: Vec<Value> = domain::load_tracks(&mut conn, &id)
+        .await?
+        .into_iter()
+        .map(|t| json!({ "id": t.id, "name": t.name }))
         .collect();
     Ok(Json(json!({
         "event": {
@@ -148,7 +156,9 @@ async fn public_stage(
             "revealed": revealed,
             "total_groups": total_groups,
             "available": available,
+            "track_id": event.stage_track_id,
         },
+        "tracks": tracks,
         "rows": rows,
     })))
 }

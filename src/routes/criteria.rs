@@ -38,6 +38,7 @@ struct CriterionInput {
     max_x100: i64,
     step_x100: i64,
     weight: i64,
+    track_id: Option<String>,
 }
 
 /// Checks scale numbers: 0 < step <= max <= limit, max divisible by step, weight 1..=1000.
@@ -75,6 +76,7 @@ async fn insert_criterion(
         None => None,
     };
     validate_scale(input.max_x100, input.step_x100, input.weight)?;
+    domain::check_track(&mut *conn, event_id, input.track_id.as_deref()).await?;
     let sort_order: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM criteria WHERE event_id = ?",
     )
@@ -89,10 +91,11 @@ async fn insert_criterion(
         step_x100: input.step_x100,
         weight: input.weight,
         sort_order,
+        track_id: input.track_id.clone(),
     };
     sqlx::query(
-        "INSERT INTO criteria (id, event_id, name, description, max_x100, step_x100, weight, sort_order) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO criteria (id, event_id, name, description, max_x100, step_x100, weight, sort_order, track_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&criterion.id)
     .bind(event_id)
@@ -102,6 +105,7 @@ async fn insert_criterion(
     .bind(criterion.step_x100)
     .bind(criterion.weight)
     .bind(criterion.sort_order)
+    .bind(&criterion.track_id)
     .execute(conn)
     .await?;
     Ok(criterion)
@@ -219,6 +223,8 @@ struct UpdateRequest {
     max_x100: Option<i64>,
     step_x100: Option<i64>,
     weight: Option<i64>,
+    #[serde(default, deserialize_with = "double_option")]
+    track_id: Option<Option<String>>,
 }
 
 async fn load_criterion_in_draft(
@@ -260,14 +266,20 @@ async fn update(
     criterion.step_x100 = req.step_x100.unwrap_or(criterion.step_x100);
     criterion.weight = req.weight.unwrap_or(criterion.weight);
     validate_scale(criterion.max_x100, criterion.step_x100, criterion.weight)?;
+    if let Some(track_id) = &req.track_id {
+        domain::check_track(&mut tx, &event_id, track_id.as_deref()).await?;
+        criterion.track_id = track_id.clone();
+    }
     sqlx::query(
-        "UPDATE criteria SET name = ?, description = ?, max_x100 = ?, step_x100 = ?, weight = ? WHERE id = ?",
+        "UPDATE criteria SET name = ?, description = ?, max_x100 = ?, step_x100 = ?, weight = ?, \
+         track_id = ? WHERE id = ?",
     )
     .bind(&criterion.name)
     .bind(&criterion.description)
     .bind(criterion.max_x100)
     .bind(criterion.step_x100)
     .bind(criterion.weight)
+    .bind(&criterion.track_id)
     .bind(&id)
     .execute(&mut *tx)
     .await?;

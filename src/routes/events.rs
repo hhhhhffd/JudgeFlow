@@ -176,6 +176,8 @@ struct PatchRequest {
     overlay_opacity: Option<i64>,
     stage_view: Option<String>,
     stage_top_n: Option<i64>,
+    #[serde(default, deserialize_with = "double_option")]
+    stage_track_id: Option<Option<String>>,
 }
 
 fn is_hex_color(value: &str) -> bool {
@@ -356,6 +358,15 @@ async fn patch(
         changed.push("stage_top_n");
         stage_touched = true;
     }
+    if let Some(track_id) = &req.stage_track_id {
+        domain::check_track(&mut tx, &id, track_id.as_deref()).await?;
+        if *track_id != current.stage_track_id {
+            event.stage_track_id = track_id.clone();
+            event.stage_revealed = 0;
+        }
+        changed.push("stage_track_id");
+        stage_touched = true;
+    }
 
     event.updated_at = now_ms();
     sqlx::query(
@@ -364,7 +375,7 @@ async fn patch(
          criteria_label = ?, criteria_label_enabled = ?, alert_enabled = ?, alert_title = ?, \
          alert_text = ?, alert_align = ?, alert_button_text = ?, alert_version = ?, \
          overlay_enabled = ?, overlay_color = ?, overlay_opacity = ?, stage_view = ?, stage_top_n = ?, \
-         stage_revealed = ?, updated_at = ? WHERE id = ?",
+         stage_revealed = ?, stage_track_id = ?, updated_at = ? WHERE id = ?",
     )
     .bind(&event.title)
     .bind(&event.description)
@@ -390,6 +401,7 @@ async fn patch(
     .bind(&event.stage_view)
     .bind(event.stage_top_n)
     .bind(event.stage_revealed)
+    .bind(&event.stage_track_id)
     .bind(event.updated_at)
     .bind(&id)
     .execute(&mut *tx)
@@ -594,6 +606,7 @@ async fn stage_reveal(
         ));
     }
     let (ranking, _) = domain::resolve_ranking(&mut tx, &event, Mode::Official).await?;
+    let ranking = domain::stage_group(ranking, &event.stage_track_id);
     let ranks: Vec<_> = ranking.rows.iter().map(|row| row.rank).collect();
     let total = stage_slice(&ranks, "podium", event.stage_top_n as u32, 0).total_groups as i64;
     // A stored value above `total` (ranking changed after re-finalizing) is clamped first.
@@ -748,37 +761,44 @@ async fn matrix(
     let mut conn = state.pool.acquire().await?;
     load_event(&mut conn, &id).await?;
     let judges = load_judges(&mut conn, &id).await?;
-    let teams = load_teams(&mut conn, &id).await?;
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM criteria WHERE event_id = ?")
-        .bind(&id)
-        .fetch_one(&mut *conn)
-        .await?;
-    let counts: HashMap<(String, String), i64> = sqlx::query_as::<_, (String, String, i64)>(
-        "SELECT s.judge_id, s.team_id, COUNT(*) FROM scores s \
-         JOIN judges j ON j.id = s.judge_id WHERE j.event_id = ? AND s.value_x100 IS NOT NULL \
-         GROUP BY s.judge_id, s.team_id",
+    let layout = domain::Layout::load(&mut conn, &id).await?;
+    let saved: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT s.judge_id, s.team_id, s.criterion_id FROM scores s \
+         JOIN judges j ON j.id = s.judge_id WHERE j.event_id = ? AND s.value_x100 IS NOT NULL",
     )
     .bind(&id)
     .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .map(|(judge, team, n)| ((judge, team), n))
-    .collect();
-    let mut cells = Vec::with_capacity(judges.len() * teams.len());
+    .await?;
+    let counts = layout.scored_per_cell(&saved);
+    let mut cells = Vec::with_capacity(judges.len() * layout.teams.len());
     for judge in &judges {
-        for team in &teams {
-            let scored = counts
-                .get(&(judge.id.clone(), team.id.clone()))
-                .copied()
-                .unwrap_or(0);
+        for team in &layout.teams {
+            let covered = layout.judge_covers(&judge.id, &team.id);
+            let (scored, total) = if covered {
+                let total = layout
+                    .criteria
+                    .iter()
+                    .filter(|c| layout.applies(&team.id, c))
+                    .count() as i64;
+                let scored = counts
+                    .get(&(judge.id.as_str(), team.id.as_str()))
+                    .copied()
+                    .unwrap_or(0);
+                (scored, total)
+            } else {
+                (0, 0)
+            };
             cells.push(json!({
                 "judge_id": judge.id, "team_id": team.id, "scored": scored, "total": total,
+                "assigned": layout.has_assignment(&judge.id, &team.id),
+                "conflict": layout.has_conflict(&judge.id, &team.id),
             }));
         }
     }
+    let teams = &layout.teams;
     let teams: Vec<Value> = teams
         .iter()
-        .map(|t| json!({ "id": t.id, "name": t.name }))
+        .map(|t| json!({ "id": t.id, "name": t.name, "track_id": t.track_id }))
         .collect();
     Ok(Json(
         json!({ "judges": judges, "teams": teams, "cells": cells }),
@@ -849,14 +869,13 @@ async fn export_csv(
         .collect();
     let criteria = domain::load_criteria(&mut conn, &id).await?;
     let judges = load_judges(&mut conn, &id).await?;
+    let tracks = domain::load_tracks(&mut conn, &id).await?;
 
-    let mut header = vec![
-        "Место".to_string(),
-        "Команда".to_string(),
-        "Балл".to_string(),
-        "Листов".to_string(),
-        "Кворум".to_string(),
-    ];
+    let mut header = vec!["Место".to_string(), "Команда".to_string()];
+    if !tracks.is_empty() {
+        header.push("Трек".to_string());
+    }
+    header.extend(["Балл", "Листов", "Кворум"].into_iter().map(String::from));
     header.extend(criteria.iter().map(|c| csv_text_cell(&c.name)));
     header.extend(judges.iter().map(|j| csv_text_cell(&j.name)));
     let mut lines = vec![header.join(";")];
@@ -864,15 +883,23 @@ async fn export_csv(
         let mut cells = vec![
             row.rank.map(|r| r.to_string()).unwrap_or_default(),
             csv_text_cell(teams.get(&row.team_id).map_or("", String::as_str)),
-            row.score_x100.map(format_x100).unwrap_or_default(),
-            row.sheets.to_string(),
-            if row.meets_quorum { "да" } else { "нет" }.to_string(),
         ];
-        cells.extend(
+        if !tracks.is_empty() {
+            let track = tracks.iter().find(|t| Some(&t.id) == row.track_id.as_ref());
+            cells.push(csv_text_cell(track.map_or("", |t| t.name.as_str())));
+        }
+        cells.push(row.score_x100.map(format_x100).unwrap_or_default());
+        cells.push(row.sheets.to_string());
+        cells.push(if row.meets_quorum { "да" } else { "нет" }.to_string());
+        // A row only carries the criteria of its own track; other columns stay empty.
+        cells.extend(criteria.iter().map(|c| {
             row.criteria
                 .iter()
-                .map(|c| c.avg_x100.map(format_x100).unwrap_or_default()),
-        );
+                .find(|avg| avg.criterion_id == c.id)
+                .and_then(|avg| avg.avg_x100)
+                .map(format_x100)
+                .unwrap_or_default()
+        }));
         cells.extend(judges.iter().map(|j| {
             row.judges
                 .iter()

@@ -68,6 +68,10 @@ pub struct Row {
     pub meets_quorum: bool,
     pub criteria: Vec<CriterionAvg>,
     pub judges: Vec<JudgeScore>,
+    /// Track group the row was ranked in; set by the caller (the engine ranks one group).
+    /// Defaults to `None` so snapshots written before tracks existed still parse.
+    #[serde(default)]
+    pub track_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,6 +186,7 @@ pub fn compute(input: &Input, mode: Mode) -> Ranking {
                     meets_quorum: sheets >= input.quorum,
                     criteria,
                     judges: judge_scores,
+                    track_id: None,
                 },
                 exact,
             }
@@ -625,6 +630,17 @@ mod tests {
         let r = compute(&i, Mode::Provisional);
         let back: Ranking = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn snapshot_without_track_id_still_parses() {
+        let old = r#"{"mode":"official","quorum":1,"rows":[{"rank":1,"tie":false,"team_id":"a",
+            "score_x100":7000,"sheets":1,"meets_quorum":true,
+            "criteria":[{"criterion_id":"c","avg_x100":700}],
+            "judges":[{"judge_id":"j","score_x100":7000}]}]}"#;
+        let ranking: Ranking = serde_json::from_str(old).unwrap();
+        assert_eq!(ranking.rows[0].track_id, None);
+        assert_eq!(ranking.rows[0].rank, Some(1));
     }
 
     fn some_ranks(values: &[u32]) -> Vec<Option<u32>> {

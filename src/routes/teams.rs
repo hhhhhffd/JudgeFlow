@@ -33,6 +33,7 @@ pub fn router() -> Router<AppState> {
 struct TeamInput {
     name: String,
     description: Option<String>,
+    track_id: Option<String>,
 }
 
 async fn insert_team(
@@ -45,6 +46,7 @@ async fn insert_team(
         Some(raw) => clean_optional(raw, "Описание команды", DESCRIPTION_MAX)?,
         None => None,
     };
+    domain::check_track(&mut *conn, event_id, input.track_id.as_deref()).await?;
     let sort_order: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM teams WHERE event_id = ?",
     )
@@ -56,15 +58,18 @@ async fn insert_team(
         name,
         description,
         sort_order,
+        track_id: input.track_id.clone(),
     };
     sqlx::query(
-        "INSERT INTO teams (id, event_id, name, description, sort_order) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO teams (id, event_id, name, description, sort_order, track_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&team.id)
     .bind(event_id)
     .bind(&team.name)
     .bind(&team.description)
     .bind(team.sort_order)
+    .bind(&team.track_id)
     .execute(conn)
     .await?;
     Ok(team)
@@ -179,27 +184,24 @@ struct UpdateRequest {
     name: Option<String>,
     #[serde(default, deserialize_with = "double_option")]
     description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    track_id: Option<Option<String>>,
 }
 
 /// Loads a team and its event id inside the transaction; the event must be a draft.
 async fn load_team_in_draft(conn: &mut SqliteConnection, id: &str) -> AppResult<(Team, String)> {
-    let row: Option<(String, String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT event_id, id, name, description, sort_order FROM teams WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    let (event_id, id, name, description, sort_order) = row.ok_or(AppError::NotFound)?;
-    domain::draft_only(&load_event(conn, &event_id).await?)?;
-    Ok((
-        Team {
-            id,
-            name,
-            description,
-            sort_order,
-        },
-        event_id,
-    ))
+    let event_id: String = sqlx::query_scalar("SELECT event_id FROM teams WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    domain::draft_only(&load_event(&mut *conn, &event_id).await?)?;
+    let team = domain::load_teams(conn, &event_id)
+        .await?
+        .into_iter()
+        .find(|t| t.id == id)
+        .ok_or(AppError::NotFound)?;
+    Ok((team, event_id))
 }
 
 async fn update(
@@ -219,9 +221,14 @@ async fn update(
             None => None,
         };
     }
-    sqlx::query("UPDATE teams SET name = ?, description = ? WHERE id = ?")
+    if let Some(track_id) = &req.track_id {
+        domain::check_track(&mut tx, &event_id, track_id.as_deref()).await?;
+        team.track_id = track_id.clone();
+    }
+    sqlx::query("UPDATE teams SET name = ?, description = ?, track_id = ? WHERE id = ?")
         .bind(&team.name)
         .bind(&team.description)
+        .bind(&team.track_id)
         .bind(&id)
         .execute(&mut *tx)
         .await?;
