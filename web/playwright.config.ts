@@ -26,5 +26,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     locale: 'ru-RU',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', testIgnore: 'a11y.spec.ts', use: { ...devices['Desktop Chrome'] } },
+    // Needs the organizer enrolled by judging.spec.ts, which would otherwise run after it alphabetically.
+    { name: 'a11y', testMatch: 'a11y.spec.ts', dependencies: ['chromium'], use: { ...devices['Desktop Chrome'] } },
+  ],
 })
