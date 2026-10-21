@@ -484,10 +484,11 @@ async fn tombstones_are_not_counted_anywhere() {
     let event = judgeflow::domain::load_event(&mut conn, &fx.event_id)
         .await
         .unwrap();
-    let input = judgeflow::domain::ranking_input(&mut conn, &event)
+    let inputs = judgeflow::domain::ranking_inputs(&mut conn, &event)
         .await
         .unwrap();
-    assert_eq!(input.scores.len(), 3);
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].1.scores.len(), 3);
 }
 
 #[tokio::test]

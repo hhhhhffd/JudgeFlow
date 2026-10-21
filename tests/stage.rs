@@ -105,7 +105,8 @@ async fn reveal_goes_from_third_to_first() {
     assert_eq!(
         s.body["stage"],
         json!({
-            "view": "podium", "top_n": 3, "revealed": 0, "total_groups": 3, "available": true
+            "view": "podium", "top_n": 3, "revealed": 0, "total_groups": 3, "available": true,
+            "track_id": null
         })
     );
     assert!(names(&s).is_empty());
