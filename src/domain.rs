@@ -264,13 +264,11 @@ impl Layout {
             .contains(&(judge_id.to_string(), team_id.to_string()))
     }
 
-    /// Assigned teams when the judge has any assignment, otherwise all teams; a conflict always wins.
+    /// All teams while the event has no assignments; afterwards only the judge's assigned teams
+    /// (a judge without assignments covers nothing). A conflict always wins.
     pub fn judge_covers(&self, judge_id: &str, team_id: &str) -> bool {
         !self.has_conflict(judge_id, team_id)
-            && self
-                .assigned
-                .get(judge_id)
-                .is_none_or(|teams| teams.contains(team_id))
+            && (self.assigned.is_empty() || self.has_assignment(judge_id, team_id))
     }
 
     /// Whether `criterion` is scored for `team_id` (unknown teams get only track-less criteria).
@@ -538,9 +536,19 @@ pub async fn compute_ranking(
     })
 }
 
-/// Keeps only the rows of the group the stage shows (`None` = teams without a track).
+/// The track the stage shows: the selected one, or the first group in ranking order (`None`
+/// inside `Some` is the group of teams without a track).
+pub fn stage_track(ranking: &Ranking, stage_track_id: &Option<String>) -> Option<String> {
+    match stage_track_id {
+        Some(_) => stage_track_id.clone(),
+        None => ranking.rows.first().and_then(|row| row.track_id.clone()),
+    }
+}
+
+/// Keeps only the rows of the group the stage shows.
 pub fn stage_group(mut ranking: Ranking, stage_track_id: &Option<String>) -> Ranking {
-    ranking.rows.retain(|row| row.track_id == *stage_track_id);
+    let track = stage_track(&ranking, stage_track_id);
+    ranking.rows.retain(|row| row.track_id == track);
     ranking
 }
 

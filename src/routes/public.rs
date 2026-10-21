@@ -94,11 +94,13 @@ async fn public_stage(
     let available = domain::is_closed(&event.status);
     let top_n = event.stage_top_n as u32;
 
+    let mut shown_track = event.stage_track_id.clone();
     let mut total_groups = 0;
     let mut revealed = 0;
     let mut rows: Vec<Value> = Vec::new();
     if available {
         let (ranking, _) = domain::resolve_ranking(&mut conn, &event, Mode::Official).await?;
+        shown_track = domain::stage_track(&ranking, &event.stage_track_id);
         let ranking = domain::stage_group(ranking, &event.stage_track_id);
         let ranks: Vec<_> = ranking.rows.iter().map(|row| row.rank).collect();
         let slice = stage_slice(
@@ -129,7 +131,7 @@ async fn public_stage(
     let criteria: Vec<Value> = load_criteria(&mut conn, &id)
         .await?
         .into_iter()
-        .filter(|c| c.track_id.is_none() || c.track_id == event.stage_track_id)
+        .filter(|c| c.track_id.is_none() || c.track_id == shown_track)
         .map(|c| json!({ "id": c.id, "name": c.name, "track_id": c.track_id }))
         .collect();
     let tracks: Vec<Value> = domain::load_tracks(&mut conn, &id)
@@ -156,7 +158,7 @@ async fn public_stage(
             "revealed": revealed,
             "total_groups": total_groups,
             "available": available,
-            "track_id": event.stage_track_id,
+            "track_id": shown_track,
         },
         "tracks": tracks,
         "rows": rows,

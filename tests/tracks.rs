@@ -293,12 +293,9 @@ async fn submit_requires_only_the_criteria_of_the_teams_track() {
 #[tokio::test]
 async fn assignments_restrict_session_scores_and_matrix() {
     let t = tracked(2, true).await;
-    let resp = t.assign("assignments", &[(0, 0)]).await;
+    let resp = t.assign("assignments", &[(0, 0), (1, 1)]).await;
     assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
-    assert_eq!(
-        resp.body["assignments"],
-        json!([{ "judge_id": t.fx.judges[0].0, "team_id": t.teams[0] }])
-    );
+    assert_eq!(resp.body["assignments"].as_array().unwrap().len(), 2);
 
     let session = t.session(0).await;
     assert_eq!(team_ids(&session), vec![t.teams[0].clone()]);
@@ -306,8 +303,7 @@ async fn assignments_restrict_session_scores_and_matrix() {
     assert_eq!(ids(&session["tracks"]), vec![t.tracks[0].clone()]);
     assert_eq!(session["teams"][0]["track_id"], t.tracks[0]);
     assert!(session["criteria"][0]["track_id"].is_null());
-    // A judge without assignments still sees everything.
-    assert_eq!(team_ids(&t.session(1).await).len(), 3);
+    assert_eq!(team_ids(&t.session(1).await), vec![t.teams[1].clone()]);
 
     let resp =
         t.fx.put_scores(
@@ -764,7 +760,7 @@ async fn stage_shows_one_track_at_a_time() {
     );
     assert_eq!(names(&stage_get(&t).await), vec!["Альфа", "Гамма"]);
 
-    // Same track again keeps the progress; null selects the teams without a track (none here).
+    // Same track again keeps the progress; null selects the first group in order.
     assert_eq!(
         stage_patch(&t, json!({ "stage_track_id": t.tracks[0] }))
             .await
@@ -773,7 +769,9 @@ async fn stage_shows_one_track_at_a_time() {
     );
     let resp = stage_patch(&t, json!({ "stage_track_id": null })).await;
     assert_eq!(resp.body["event"]["stage_revealed"], 0);
-    assert_eq!(stage_get(&t).await.body["stage"]["total_groups"], 0);
+    let s = stage_get(&t).await;
+    assert_eq!(s.body["stage"]["total_groups"], 2);
+    assert_eq!(s.body["stage"]["track_id"], t.tracks[0]);
 
     let other =
         t.fx.admin(Method::POST, "/events", Some(json!({ "title": "Другое" })))
@@ -1034,4 +1032,37 @@ async fn snapshot_keeps_track_ids_and_public_results_include_tracks() {
     assert_eq!(results["rows"][2]["track_id"], t.tracks[1]);
     assert_eq!(results["rows"][2]["rank"], 1);
     assert_eq!(public.body["event"]["criteria"][1]["track_id"], t.tracks[1]);
+}
+
+#[tokio::test]
+async fn unassigned_judge_judges_nothing_once_assignments_exist() {
+    let t = tracked(4, false).await;
+    let resp =
+        t.fx.admin(
+            Method::POST,
+            &format!("/events/{}/assignments/auto", t.fx.event_id),
+            Some(json!({ "judges_per_team": 1 })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    assert_eq!(
+        assignment_map(&resp.body, &t.fx.judges, &t.teams),
+        vec![vec![0], vec![1], vec![2]]
+    );
+    let started = t.fx.transition(json!({ "to": "judging" })).await;
+    assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
+
+    // The extra judge has nothing to score; the matrix shows no work and submit is allowed.
+    assert!(team_ids(&t.session(3).await).is_empty());
+    assert_eq!(t.matrix_cell(3, 0).await["total"], 0);
+    let put =
+        t.fx.put_scores(3, json!([item(&t.teams[0], t.idea(), 500, now_ms())]))
+            .await;
+    assert_eq!(put.body["results"][0]["error"], "not_assigned");
+    let submit = t.fx.judge(3, Method::POST, "/judge/submit", None).await;
+    assert_eq!(submit.status, StatusCode::OK, "{:?}", submit.body);
+
+    // Clearing the assignments makes everybody judge everything again.
+    assert_eq!(t.assign("assignments", &[]).await.status, StatusCode::OK);
+    assert_eq!(team_ids(&t.session(3).await).len(), 3);
 }
