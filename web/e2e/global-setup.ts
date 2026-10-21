@@ -67,5 +67,7 @@ export default async function globalSetup() {
     throw e
   }
   process.env.E2E_BASE_URL = baseURL
+  // Specs share one server; the first spec stores the organizer's TOTP secret here for the next ones.
+  process.env.E2E_ADMIN_FILE = join(dataDir, 'e2e-admin.json')
   return stop
 }

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { saveAdmin } from './admin'
 import { totp } from './totp'
 
 test.use({ baseURL: process.env.E2E_BASE_URL })
@@ -19,6 +20,7 @@ test('organizer runs an event from first start to a published result', async ({ 
   await page.getByRole('button', { name: 'Продолжить' }).click()
   const secret = await page.getByLabel('Ключ', { exact: true }).inputValue()
   await shot(page, '01-enroll')
+  saveAdmin('Анна', secret)
   const enrollCode = totp(secret)
   await page.getByLabel('Цифра 1 из 6').fill(enrollCode)
   await expect(page.getByRole('heading', { name: 'Мероприятия' })).toBeVisible()
@@ -106,7 +108,7 @@ test('organizer runs an event from first start to a published result', async ({ 
 
   // ---- monitoring matrix and the public board while judging ----
   await page.getByRole('link', { name: 'Обзор' }).click()
-  await expect(page.getByText('Судья Первый')).toBeVisible()
+  await expect(page.getByRole('table').getByText('Судья Первый')).toBeVisible()
   await expect(page.getByText('Судьи сдали листы').locator('xpath=following-sibling::*').first()).toHaveText('1/2')
   await shot(page, '09-matrix')
 
