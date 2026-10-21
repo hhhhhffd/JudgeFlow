@@ -226,7 +226,7 @@ fn resolve_client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust_proxy: boo
     if trust_proxy {
         let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
         let forwarded = header("cf-connecting-ip")
-            .or_else(|| header("x-forwarded-for").and_then(|v| v.split(',').next()))
+            .or_else(|| header("x-forwarded-for").and_then(|v| v.rsplit(',').next()))
             .map(str::trim)
             .filter(|v| !v.is_empty());
         if let Some(ip) = forwarded {
@@ -298,7 +298,8 @@ mod client_ip_tests {
         ]);
         assert_eq!(resolve_client_ip(&both, peer, true), "1.1.1.1");
         let xff = headers(&[("x-forwarded-for", "2.2.2.2, 3.3.3.3")]);
-        assert_eq!(resolve_client_ip(&xff, peer, true), "2.2.2.2");
+        // The first entry is client-controlled; the last one is appended by the trusted proxy.
+        assert_eq!(resolve_client_ip(&xff, peer, true), "3.3.3.3");
         assert_eq!(resolve_client_ip(&HeaderMap::new(), peer, true), "10.0.0.1");
         assert_eq!(resolve_client_ip(&HeaderMap::new(), None, true), "unknown");
     }
