@@ -158,7 +158,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
             </Badge>
           ) : (
             canSubmit && (
-              <Button size="sm" onClick={openSubmit}>
+              <Button size="sm" onClick={openSubmit} aria-label={judgeText.submit.button}>
                 <Send />
                 <span className="hidden sm:inline">{judgeText.submit.button}</span>
               </Button>
