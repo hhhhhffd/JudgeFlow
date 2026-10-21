@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
 import { eventsApi } from '@/api/endpoints'
+import type { UnsubmittedDetails } from '@/api/types'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -12,7 +13,7 @@ import { cr } from '@/i18n/control-room'
 import { errorText } from '@/lib/errors'
 import { ConfirmDialog } from './confirm-dialog'
 import { useFull } from './context'
-import { extractNames, LIFECYCLE, type LifecycleAction } from './lib'
+import { LIFECYCLE, type LifecycleAction } from './lib'
 
 export function EventHeader() {
   const { event } = useFull()
@@ -84,7 +85,7 @@ function TransitionDialog({ action, onClose }: { action: LifecycleAction; onClos
   })
 
   const conflict = transition.error instanceof ApiError && transition.error.status === 409 && action.key === 'finalize' ? transition.error : null
-  const names = conflict ? extractNames(conflict.details) : []
+  const names = ((conflict?.details as UnsubmittedDetails | undefined)?.unsubmitted ?? []).map((j) => j.name)
   const needsReason = action.reasonRequired || conflict !== null
 
   return (

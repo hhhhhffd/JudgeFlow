@@ -90,26 +90,24 @@ export interface EventRecord {
   alert_align: AlertAlign
   alert_button_text: string
   alert_version: number
-  background_file: string | null
+  /** `/api/public/events/{id}/background?v=…` or null. */
+  background_url: string | null
   overlay_enabled: boolean
   overlay_color: string
   overlay_opacity: number
   locked_at: number | null
-  created_by: Id | null
   created_at: number
   updated_at: number
 }
 
 export interface Team {
   id: Id
-  event_id: Id
   name: string
   description: string | null
   sort_order: number
 }
 export interface Criterion {
   id: Id
-  event_id: Id
   name: string
   description: string | null
   max_x100: number
@@ -230,12 +228,14 @@ export interface CriterionAvg {
 }
 export interface JudgeScore {
   judge_id: Id
+  judge_name: string
   score_x100: number
 }
 export interface RankingRow {
   rank: number | null
   tie: boolean
   team_id: Id
+  team_name: string
   score_x100: number | null
   sheets: number
   meets_quorum: boolean
@@ -247,13 +247,9 @@ export interface Ranking {
   quorum: number
   rows: RankingRow[]
 }
-/** Public rows additionally carry the team name. */
-export interface PublicRankingRow extends RankingRow {
-  team_name: string
-}
-export interface PublicRanking extends Omit<Ranking, 'rows'> {
-  rows: PublicRankingRow[]
-}
+/** Public payloads share the admin ranking shape. */
+export type PublicRankingRow = RankingRow
+export type PublicRanking = Ranking
 export interface ResultSnapshot {
   id: Id
   created_at: number
@@ -335,6 +331,14 @@ export interface JudgeSubmitResponse {
 }
 export interface SubmitMissingDetails {
   missing: { team_id: Id; criterion_id: Id }[]
+}
+/** 409 invalid_state details when finalizing with unsubmitted judges. */
+export interface UnsubmittedDetails {
+  unsubmitted: { id: Id; name: string }[]
+}
+/** 409 invalid_state details when draft -> judging lacks content. */
+export interface MissingContentDetails {
+  missing: ('teams' | 'criteria' | 'judges')[]
 }
 export interface HeartbeatRequest {
   pending_count: number

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { JudgeSummary, Matrix } from '@/api/types'
-import { cellState, computeKpis, extractNames, formatAgo, moveItem, parseNames, parseTeamsPaste } from './lib'
+import { cellState, computeKpis, formatAgo, moveItem, parseNames, parseTeamsPaste } from './lib'
 
 const judge = (o: Partial<JudgeSummary> = {}): JudgeSummary => ({
   id: 'j1', name: 'J', is_active: true, submitted_at: null, last_seen_at: null, pending_count: 0, scored_count: 0, ...o,
@@ -45,14 +45,6 @@ describe('computeKpis', () => {
       ],
     }
     expect(computeKpis(m)).toEqual({ teamsWithScores: 1, teamsTotal: 2, judgesSubmitted: 1, judgesActive: 1, attention: 1, coveragePct: 50 })
-  })
-})
-
-describe('extractNames', () => {
-  it('handles arrays, wrapped arrays and junk', () => {
-    expect(extractNames([{ id: '1', name: 'A' }, 'B'])).toEqual(['A', 'B'])
-    expect(extractNames({ unsubmitted: [{ name: 'C' }] })).toEqual(['C'])
-    expect(extractNames(null)).toEqual([])
   })
 })
 

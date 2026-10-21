@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { ImagePlus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { eventsApi, publicApi } from '@/api/endpoints'
+import { eventsApi } from '@/api/endpoints'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -26,8 +26,8 @@ export function Appearance() {
     cr.setup.saved,
   )
 
-  const hasBackground = event.background_file != null
-  const bgUrl = `${publicApi.backgroundUrl(event.id)}?v=${event.updated_at}`
+  const hasBackground = event.background_url != null
+  const bgUrl = event.background_url ?? ''
 
   function onPick(file: File | undefined) {
     if (input.current) input.current.value = ''

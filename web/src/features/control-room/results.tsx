@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { eventsApi } from '@/api/endpoints'
-import type { RankingMode, RankingRow } from '@/api/types'
+import type { RankingMode } from '@/api/types'
 import { EmptyState, ErrorState } from '@/components/state-views'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,14 +15,13 @@ import { cn } from '@/lib/utils'
 import { useFull } from './context'
 
 export function Results() {
-  const { event, teams, criteria, judges } = useFull()
+  const { event, criteria } = useFull()
   const settled = event.status === 'finalized' || event.status === 'published'
   const [picked, setPicked] = useState<RankingMode | null>(null)
   const mode = picked ?? (settled ? 'official' : 'provisional')
   const [open, setOpen] = useState<Set<string>>(new Set())
   const results = useQuery({ queryKey: ['cr', event.id, 'results', mode], queryFn: () => eventsApi.results(event.id, mode) })
 
-  const teamName = (row: RankingRow & { team_name?: string }) => row.team_name ?? teams.find((t) => t.id === row.team_id)?.name ?? row.team_id
   const toggle = (id: string) =>
     setOpen((s) => {
       const n = new Set(s)
@@ -77,7 +76,7 @@ export function Results() {
                   <TableHead className="text-right">{cr.results.sheets}</TableHead>
                   {criteria.map((c) => (
                     <TableHead key={c.id} className="hidden text-right xl:table-cell">
-                      <span className="block max-w-24 truncate" title={c.name}>
+                      <span className="ml-auto block max-w-24 truncate" title={c.name}>
                         {c.name}
                       </span>
                     </TableHead>
@@ -87,7 +86,7 @@ export function Results() {
               <TableBody>
                 {results.data.rows.map((row) => {
                   const expanded = open.has(row.team_id)
-                  const name = teamName(row)
+                  const name = row.team_name
                   return (
                     <Fragment key={row.team_id}>
                       <TableRow>
@@ -128,7 +127,7 @@ export function Results() {
                           <TableCell colSpan={4 + criteria.length} className="whitespace-normal">
                             <div className="grid gap-4 py-1 sm:grid-cols-2">
                               <Breakdown title={cr.results.byCriteria} empty={cr.results.noJudges} items={criteria.map((c) => ({ key: c.id, label: c.name, value: row.criteria.find((a) => a.criterion_id === c.id)?.avg_x100 ?? null }))} />
-                              <Breakdown title={cr.results.byJudges} empty={cr.results.noJudges} items={row.judges.map((j) => ({ key: j.judge_id, label: judges.find((x) => x.id === j.judge_id)?.name ?? j.judge_id, value: j.score_x100 }))} />
+                              <Breakdown title={cr.results.byJudges} empty={cr.results.noJudges} items={row.judges.map((j) => ({ key: j.judge_id, label: j.judge_name, value: j.score_x100 }))} />
                             </div>
                           </TableCell>
                         </TableRow>

@@ -41,22 +41,6 @@ export const LIFECYCLE: Record<EventStatus, LifecycleAction[]> = {
   published: [{ to: 'finalized', key: 'unpublish', reasonRequired: false, primary: false }],
 }
 
-/** Best-effort extraction of judge names from a 409 `details` payload (shape is not fixed by the spec). */
-export function extractNames(details: unknown): string[] {
-  const list = Array.isArray(details)
-    ? details
-    : details && typeof details === 'object'
-      ? (Object.values(details).find(Array.isArray) as unknown[] | undefined) ?? []
-      : []
-  return list
-    .map((item) => {
-      if (typeof item === 'string') return item
-      if (item && typeof item === 'object' && 'name' in item && typeof item.name === 'string') return item.name
-      return ''
-    })
-    .filter(Boolean)
-}
-
 export type CellState = 'attention' | 'submitted' | 'partial' | 'empty'
 
 /** SPEC §9: green submitted, yellow partial/unsubmitted, grey not started, red inactive/pending sync. */
