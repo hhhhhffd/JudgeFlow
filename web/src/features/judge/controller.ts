@@ -134,7 +134,7 @@ export class DeskController {
       token: this.token,
       onChange: (kind) => {
         // scores are our own echo; presence is judges' heartbeats: neither changes what a judge sees.
-        if (kind !== 'scores' && kind !== 'presence') this.scheduleRefresh()
+        if (kind !== 'scores' && kind !== 'presence' && kind !== 'stage') this.scheduleRefresh()
       },
       onOpen: ({ reconnect }) => {
         if (!reconnect) return

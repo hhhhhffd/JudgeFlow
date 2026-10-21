@@ -44,7 +44,7 @@ export function createSseParser() {
   }
 }
 
-const KINDS: readonly string[] = ['scores', 'status', 'event', 'composition', 'alert', 'judges', 'presence']
+const KINDS: readonly string[] = ['scores', 'status', 'event', 'composition', 'alert', 'judges', 'presence', 'stage']
 
 /** Extracts the change kind from a `change` message; null for anything else. */
 export function parseChangeKind(msg: ParsedSseMessage): ChangeKind | null {

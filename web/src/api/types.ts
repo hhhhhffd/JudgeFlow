@@ -7,6 +7,8 @@ export type EventStatus = 'draft' | 'judging' | 'locked' | 'finalized' | 'publis
 export type ScoringMode = 'team' | 'criterion'
 export type Visibility = 'hidden' | 'live_totals' | 'live_full'
 export type AlertAlign = 'left' | 'center'
+export type StageView = 'waiting' | 'leaderboard' | 'podium'
+export type StageAction = 'next' | 'prev' | 'reset' | 'all'
 
 export interface Admin {
   id: Id
@@ -95,6 +97,9 @@ export interface EventRecord {
   overlay_enabled: boolean
   overlay_color: string
   overlay_opacity: number
+  stage_view: StageView
+  stage_top_n: number
+  stage_revealed: number
   locked_at: number | null
   created_at: number
   updated_at: number
@@ -161,6 +166,8 @@ export type UpdateEventRequest = Partial<
     | 'overlay_enabled'
     | 'overlay_color'
     | 'overlay_opacity'
+    | 'stage_view'
+    | 'stage_top_n'
   >
 >
 
@@ -364,5 +371,31 @@ export interface PublicEventResponse {
   results: PublicRanking | null
 }
 
+/** GET /api/public/events/:id/stage (SPEC §11): only revealed rows, never per-judge data. */
+export interface StageState {
+  view: StageView
+  top_n: number
+  revealed: number
+  total_groups: number
+  available: boolean
+}
+export interface StageEvent {
+  id: Id
+  title: string
+  status: EventStatus
+  background_url: string | null
+  overlay: Overlay
+  teams_label: string | null
+  teams_label_enabled: boolean
+  criteria_label: string | null
+  criteria_label_enabled: boolean
+  criteria: Pick<Criterion, 'id' | 'name'>[]
+}
+export interface StageResponse {
+  event: StageEvent
+  stage: StageState
+  rows: PublicRankingRow[]
+}
+
 // ---- stream ----
-export type ChangeKind = 'scores' | 'status' | 'event' | 'composition' | 'alert' | 'judges' | 'presence'
+export type ChangeKind = 'scores' | 'status' | 'event' | 'composition' | 'alert' | 'judges' | 'presence' | 'stage'

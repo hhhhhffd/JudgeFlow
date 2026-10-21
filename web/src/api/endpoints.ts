@@ -82,6 +82,9 @@ export const eventsApi = {
     }),
   removeBackground: (id: T.Id) => request<T.EventFull>(`/api/events/${id}/background`, { method: 'DELETE' }),
 
+  revealStage: (id: T.Id, action: T.StageAction) =>
+    request<T.EventFull>(`/api/events/${id}/stage/reveal`, { method: 'POST', body: { action } }),
+
   matrix: (id: T.Id) => request<T.Matrix>(`/api/events/${id}/matrix`),
   results: (id: T.Id, mode: T.RankingMode) => request<T.ResultsResponse>(`/api/events/${id}/results?mode=${mode}`),
   /** Plain URL for a download link (cookie-authenticated). */
@@ -105,6 +108,7 @@ export const judgeApi = {
 // ---- public ----
 export const publicApi = {
   event: (id: T.Id) => request<T.PublicEventResponse>(`/api/public/events/${id}`),
+  stage: (id: T.Id) => request<T.StageResponse>(`/api/public/events/${id}/stage`),
   streamUrl: (id: T.Id) => `/api/public/events/${id}/stream`,
   backgroundUrl: (id: T.Id) => `/api/public/events/${id}/background`,
 }

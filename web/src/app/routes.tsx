@@ -12,6 +12,7 @@ const LoginPage = lazy(() => import('@/pages/login'))
 const InvitePage = lazy(() => import('@/pages/invite'))
 const ControlRoom = lazy(() => import('@/features/control-room'))
 const JudgeDesk = lazy(() => import('@/features/judge'))
+const StageScreen = lazy(() => import('@/features/stage'))
 const LiveBoard = lazy(() => import('@/features/live'))
 
 const fallback = <Skeleton className="m-6 h-40" />
@@ -34,6 +35,7 @@ export function AppRoutes() {
         <Route path="/j/:token" element={<JudgeDesk />} />
         <Route path="/judge" element={<JudgeDesk />} />
         <Route path="/live/:eventId" element={<LiveBoard />} />
+        <Route path="/stage/:eventId" element={<StageScreen />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Suspense>

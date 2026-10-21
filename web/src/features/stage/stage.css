@@ -1,0 +1,155 @@
+/*
+ * Projector theme: always dark (a bright white screen in a dark hall is hostile), independent of the
+ * visitor's colour scheme. Tokens are re-declared here so the shared Backdrop/utilities pick them up.
+ */
+.stage-root {
+  --background: oklch(0.15 0.035 262);
+  --foreground: oklch(0.97 0.006 255);
+  --card: oklch(0.21 0.035 262);
+  --border: oklch(0.36 0.035 262);
+  --muted-foreground: oklch(0.78 0.02 257);
+  --signal: oklch(0.82 0.15 82);
+  --signal-foreground: oklch(0.24 0.06 70);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  color: var(--foreground);
+}
+
+/* Widget mode: nothing but the content, on a transparent canvas (OBS browser source). */
+.stage-widget {
+  --card: oklch(0.2 0.035 262 / 0.82);
+}
+
+@keyframes stage-rise {
+  from {
+    opacity: 0;
+    transform: translateY(1.6rem) scale(0.97);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+@keyframes stage-slide {
+  from {
+    opacity: 0;
+    transform: translateY(-0.8rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes stage-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes stage-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+}
+@keyframes stage-grow {
+  from {
+    transform: scaleY(0.2);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.stage-fresh {
+  animation: stage-rise 760ms var(--ease-out) both;
+}
+.stage-fresh-row {
+  animation: stage-slide 520ms var(--ease-out) both;
+}
+.stage-plinth-fresh {
+  transform-origin: bottom;
+  animation: stage-grow 680ms var(--ease-out) both;
+}
+.stage-glow {
+  animation: stage-glow 1800ms var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-root .stage-fresh,
+  .stage-root .stage-fresh-row,
+  .stage-root .stage-plinth-fresh {
+    animation: stage-fade 300ms ease both !important;
+    animation-duration: 300ms !important;
+  }
+  .stage-root .stage-glow {
+    animation: stage-fade 300ms ease both !important;
+    animation-duration: 300ms !important;
+  }
+}
+
+/* Podium: 2-1-3 columns on landscape screens, a stacked list in portrait. */
+.stage-podium {
+  display: grid;
+  gap: 1.1rem;
+  align-content: center;
+}
+@media (orientation: landscape) and (min-width: 700px) {
+  .stage-podium {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: end;
+    align-content: end;
+    gap: 2.2vw;
+  }
+  .stage-slot-1 { grid-column: 2; grid-row: 1; }
+  .stage-slot-2 { grid-column: 1; grid-row: 1; }
+  .stage-slot-3 { grid-column: 3; grid-row: 1; }
+  .stage-slot-1 .stage-plinth { height: 32vh; }
+  .stage-slot-2 .stage-plinth { height: 23vh; }
+  .stage-slot-3 .stage-plinth { height: 16vh; }
+  .stage-slot-1 .stage-numeral { font-size: 22vh; }
+  .stage-slot-2 .stage-numeral { font-size: 16vh; }
+  .stage-slot-3 .stage-numeral { font-size: 11vh; }
+}
+
+.stage-ticks {
+  background-image: repeating-linear-gradient(
+    90deg,
+    color-mix(in oklch, currentColor 45%, transparent) 0 2px,
+    transparent 2px 12px
+  );
+}
+
+/* Leaderboard grid; criteria columns appear only where there is room. */
+.stage-board {
+  --cols: 4.2em minmax(0, 1fr) 6.5em;
+}
+.stage-board-row {
+  display: grid;
+  grid-template-columns: var(--cols);
+  align-items: center;
+  gap: 0 0.8em;
+}
+.stage-crit {
+  display: none;
+}
+@media (min-width: 900px) {
+  .stage-board-crit {
+    --cols: 4.2em minmax(0, 1fr) repeat(var(--n), 8em) 6.5em;
+  }
+  .stage-board-crit .stage-crit {
+    display: block;
+  }
+}
