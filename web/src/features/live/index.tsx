@@ -1,5 +1,5 @@
 // Public live leaderboard (/live/:eventId): provisional totals or published results, updated over SSE.
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Hourglass, WifiOff } from 'lucide-react'
 import { useParams } from 'react-router-dom'
@@ -17,6 +17,7 @@ import { Backdrop } from './backdrop'
 
 const REFETCH_DEBOUNCE_MS = 500
 const PROBE_MS = 30_000
+const FALLBACK_POLL_MS = 15_000
 
 const LIVE_KINDS: readonly ChangeKind[] = ['scores', 'status', 'event', 'composition', 'stage']
 
@@ -24,12 +25,14 @@ export default function LiveBoard() {
   const { eventId = '' } = useParams()
   const client = useQueryClient()
   const key = ['public-event', eventId]
+  const [streamOpen, setStreamOpen] = useState(false)
   const query = useQuery({
     queryKey: key,
     queryFn: () => publicApi.event(eventId),
     retry: (count, e) => !(e instanceof ApiError && (e.isNotFound || e.status === 400)) && count < 2,
     // A draft event is 404 until it opens; keep probing so the page comes alive on its own.
-    refetchInterval: (q) => (q.state.data ? false : PROBE_MS),
+    // Without a live stream (rejected, proxy-buffered, offline) the board falls back to polling.
+    refetchInterval: (q) => (q.state.data ? (streamOpen ? false : FALLBACK_POLL_MS) : PROBE_MS),
   })
   const hasData = query.data !== undefined
 
@@ -44,9 +47,13 @@ export default function LiveBoard() {
         timer = window.setTimeout(() => void client.invalidateQueries({ queryKey: ['public-event', eventId] }), REFETCH_DEBOUNCE_MS)
       },
       onOpen: ({ reconnect }) => {
+        setStreamOpen(true)
         if (reconnect) void client.invalidateQueries({ queryKey: ['public-event', eventId] })
       },
-      onError: (e) => console.warn('live: stream error', e),
+      onError: (e) => {
+        setStreamOpen(false)
+        console.warn('live: stream error', e)
+      },
     })
     return () => {
       window.clearTimeout(timer)
