@@ -806,6 +806,9 @@ async fn matrix(
         .fetch_all(&mut *conn)
         .await?;
         for (judge, a, b) in decided {
+            if !(layout.judge_covers(&judge, &a) && layout.judge_covers(&judge, &b)) {
+                continue;
+            }
             *counts.entry((judge.clone(), a)).or_default() += 1;
             *counts.entry((judge, b)).or_default() += 1;
         }
