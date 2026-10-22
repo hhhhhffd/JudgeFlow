@@ -44,6 +44,7 @@ import { adoptOrphans, forgetDesk, loadDesk, onStorageBlocked, saveSession, toke
 export const SYNC_DEBOUNCE_MS = 1500
 const REFRESH_DEBOUNCE_MS = 500
 const RETRY_MS = 10_000
+const REFRESH_RETRY_MS = 10_000
 const HEARTBEAT_MS = 30_000
 const MAX_PASSES = 20
 
@@ -97,9 +98,11 @@ export class DeskController {
   private writes: Promise<void> = Promise.resolve()
   private flushQueued = false
   private refreshQueued = false
-  private timers: { flush?: number; refresh?: number; retry?: number; heartbeat?: number } = {}
+  private timers: { flush?: number; refresh?: number; refreshRetry?: number; retry?: number; heartbeat?: number } = {}
   private stopStream: (() => void) | null = null
   private running = false
+  /** Bumped by every start/stop so a boot that outlived its start (React StrictMode) can tell and bail out. */
+  private generation = 0
   private adoptionDone = false
   private readonly k: string
 
@@ -122,11 +125,12 @@ export class DeskController {
 
   start() {
     this.running = true
+    const generation = ++this.generation
     onStorageBlocked((storageBlocked) => this.set({ storageBlocked }))
     window.addEventListener('online', this.onOnline)
     window.addEventListener('offline', this.onOffline)
     document.addEventListener('visibilitychange', this.onVisibility)
-    void this.boot()
+    void this.boot(generation)
   }
 
   /** Stops the desk and erases this token's cached session and score rows from the device. */
@@ -138,6 +142,7 @@ export class DeskController {
 
   stop() {
     this.running = false
+    this.generation++
     onStorageBlocked(null)
     window.removeEventListener('online', this.onOnline)
     window.removeEventListener('offline', this.onOffline)
@@ -148,10 +153,11 @@ export class DeskController {
     this.stopStream = null
   }
 
-  private async boot() {
+  private async boot(generation: number) {
+    const current = () => this.running && generation === this.generation
     try {
       const { session, rows, comparisons } = await loadDesk(this.k)
-      if (!this.running) return
+      if (!current()) return
       const byKey: Rows = {}
       for (const r of rows) byKey[`${r.team_id}:${r.criterion_id}`] = r
       this.set({ rows: byKey, comparisons: Object.fromEntries(comparisons.map((c) => [c.id, c])), ...(session ? { session, phase: 'ready', fromCache: true } : {}) })
@@ -159,9 +165,18 @@ export class DeskController {
       console.error('judge: cannot read device storage', e)
       this.set({ storageError: judgeText.sync.storage })
     }
-    if (!this.running) return
+    if (!current()) return
     await this.refresh()
-    if (!this.running) return
+    if (!current()) return
+    this.openEventStream()
+    this.timers.heartbeat = window.setInterval(() => void this.heartbeat(), HEARTBEAT_MS)
+    void this.heartbeat()
+    void this.flush()
+  }
+
+  /** (Re)opens the change stream; any previous one is closed first. */
+  private openEventStream() {
+    this.stopStream?.()
     this.stopStream = openStream(judgeApi.streamUrl, {
       token: this.token,
       onChange: (kind) => {
@@ -169,7 +184,8 @@ export class DeskController {
         if (kind !== 'scores' && kind !== 'presence' && kind !== 'stage') this.scheduleRefresh()
       },
       onOpen: ({ reconnect }) => {
-        if (!reconnect) return
+        // A first open after a failed boot also needs a refresh: the cached session is still on screen.
+        if (!reconnect && !this.state.fromCache) return
         void this.refresh()
         void this.flush()
       },
@@ -178,9 +194,6 @@ export class DeskController {
         if (e instanceof Error && e.message.startsWith('stream rejected')) this.scheduleRefresh()
       },
     })
-    this.timers.heartbeat = window.setInterval(() => void this.heartbeat(), HEARTBEAT_MS)
-    void this.heartbeat()
-    void this.flush()
   }
 
   private onOnline = () => {
@@ -241,6 +254,8 @@ export class DeskController {
     if (context === 'refresh') {
       if (this.state.session) this.set({ fromCache: true })
       else this.set({ phase: 'failed', failure: network ? judgeText.failed.offlineText : message })
+      window.clearTimeout(this.timers.refreshRetry)
+      this.timers.refreshRetry = window.setTimeout(() => void this.refresh(), REFRESH_RETRY_MS)
       return
     }
     this.set({ syncing: false, syncError: network && !this.state.online ? null : message })
@@ -269,6 +284,7 @@ export class DeskController {
         const prevComparisons = this.state.comparisons
         const comparisons = session.comparisons ? mergeComparisons(prevComparisons, session.comparisons) : prevComparisons
         // Whatever stopped the last reserve (status, teams, assignments) may have changed: look again.
+        window.clearTimeout(this.timers.refreshRetry)
         this.set({ session, rows, comparisons, phase: 'ready', fromCache: false, failure: null, reserveExhausted: false })
         this.persist(prev, rows, session)
         this.persistComparisons(prevComparisons, comparisons)
@@ -312,7 +328,10 @@ export class DeskController {
   /** Leaves the revoked screen to retry from scratch. */
   recheck() {
     this.set({ phase: this.state.session ? 'ready' : 'loading' })
-    void this.refresh()
+    // A revoked token ended the stream for good; reopen it once the server accepts the token again.
+    void this.refresh().then(() => {
+      if (this.running && this.state.phase !== 'revoked') this.openEventStream()
+    })
   }
 
   // ---- edits ----

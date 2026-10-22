@@ -80,8 +80,13 @@ export function openStream(url: string, opts: StreamOptions): () => void {
 
   const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, ms)
-      controller.signal.addEventListener('abort', () => (clearTimeout(t), resolve()), { once: true })
+      const done = () => {
+        clearTimeout(timer)
+        controller.signal.removeEventListener('abort', done)
+        resolve()
+      }
+      const timer = setTimeout(done, ms)
+      controller.signal.addEventListener('abort', done, { once: true })
     })
 
   async function run() {
