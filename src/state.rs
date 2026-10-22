@@ -30,10 +30,16 @@ pub struct AppState {
     pub judge_streams: StreamLimiter,
     /// Random password for `/api/setup/first-start/begin`; only valid while no admin exists.
     pub setup_password: Arc<str>,
+    /// Encrypted throwaway TOTP secret that unknown login names are checked against, so they cost
+    /// the same decrypt + verify as a real admin without generating a secret per attempt.
+    pub dummy_totp_secret: Arc<[u8]>,
 }
 
 impl AppState {
     pub fn new(pool: SqlitePool, config: Config, crypto: Crypto) -> Self {
+        let dummy_totp_secret = crate::totp::generate(&crypto, "dummy")
+            .expect("generating the dummy TOTP secret")
+            .encrypted;
         Self {
             pool,
             config: Arc::new(config),
@@ -44,6 +50,7 @@ impl AppState {
             public_streams: StreamLimiter::default(),
             judge_streams: StreamLimiter::default(),
             setup_password: crypto::random_token().into(),
+            dummy_totp_secret: dummy_totp_secret.into(),
         }
     }
 

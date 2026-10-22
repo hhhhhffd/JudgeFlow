@@ -70,8 +70,7 @@ async fn login(
     let Some(row) = row else {
         // Do the same decrypt + TOTP work as for a real admin so timing does not reveal
         // whether the name exists.
-        let dummy = totp::generate(&state.crypto, name)?;
-        totp::check_code(&state.crypto, &dummy.encrypted, name, &req.code)?;
+        totp::check_code(&state.crypto, &state.dummy_totp_secret, name, &req.code)?;
         return Err(AppError::BadCredentials(BAD_LOGIN));
     };
     let LoginRow {
