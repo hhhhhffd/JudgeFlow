@@ -11,7 +11,7 @@ import { judgeText } from '@/i18n/judge'
 import { ru } from '@/i18n/ru'
 import { cn } from '@/lib/utils'
 import { AlertModal } from './alert-modal'
-import { BackupAlert, BackupMenu } from './backup'
+import { BackupAlert, BackupMenu, LockedRejectedNotice } from './backup'
 import type { DeskController } from './controller'
 import { HotkeysHelp, isTyping } from './hotkeys'
 import {
@@ -24,9 +24,9 @@ import {
   sortedComparisons,
   winnerForKey,
 } from './pairwise'
-import { readOnlyReason, syncIndicator } from './scoring'
+import { canRetry, readOnlyReason, syncIndicator } from './scoring'
 import { getSeenAlertVersion, setSeenAlertVersion } from './storage'
-import { SyncBadge } from './sync-badge'
+import { CachedCopyNotice, SyncBadge } from './sync-badge'
 
 const t = judgeText.pairwise
 
@@ -53,6 +53,7 @@ export function PairwiseDesk({ controller, session }: { controller: DeskControll
     rejected: errorComparisons(state.comparisons).length,
     syncError: state.syncError,
   })
+  const retryAllowed = canRetry(errorComparisons(state.comparisons).map((c) => c.error), event.status)
   const alertOpen = event.alert.enabled && event.alert.version > seenAlert
 
   function choose(winner: Winner) {
@@ -106,12 +107,12 @@ export function PairwiseDesk({ controller, session }: { controller: DeskControll
     <>
       <Backdrop url={event.background_url} overlay={event.overlay} />
       <div className="relative z-10 flex min-h-dvh flex-col">
-        <header className="sticky top-0 z-20 flex items-center gap-3 border-b bg-card/90 px-4 py-2.5 backdrop-blur">
-          <div className="min-w-0 flex-1">
+        <header className="sticky top-0 z-20 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b bg-card/90 px-4 py-2.5 backdrop-blur">
+          <div className="min-w-0 basis-full sm:flex-1 sm:basis-0">
             <h1 className="truncate text-base leading-tight font-semibold sm:text-lg">{event.title}</h1>
             <p className="truncate text-xs text-muted-foreground">{session.judge.name}</p>
           </div>
-          <SyncBadge kind={indicator.kind} text={indicator.text} pending={pending} fromCache={state.fromCache} onRetry={() => controller.retryRejected()} />
+          <SyncBadge kind={indicator.kind} text={indicator.text} pending={pending} fromCache={state.fromCache} canRetry={retryAllowed} onRetry={() => controller.retryRejected()} />
           <BackupMenu controller={controller} />
           <HotkeysHelp rows={judgeText.hotkeys.pairwiseRows} />
           {session.judge.submitted_at !== null ? (
@@ -120,14 +121,16 @@ export function PairwiseDesk({ controller, session }: { controller: DeskControll
             </Badge>
           ) : (
             !readOnly && (
-              <Button size="sm" onClick={() => setSubmitOpen(true)} aria-label={judgeText.submit.button}>
+              <Button size="sm" className="h-11 sm:h-8" onClick={() => setSubmitOpen(true)}>
                 <Send />
-                <span className="hidden sm:inline">{judgeText.submit.button}</span>
+                {judgeText.submit.button}
               </Button>
             )
           )}
         </header>
 
+        <CachedCopyNotice fromCache={state.fromCache} />
+        {indicator.kind === 'error' && !retryAllowed && <LockedRejectedNotice controller={controller} />}
         <BackupAlert controller={controller} errorKind={indicator.kind === 'error'} />
         {state.storageError && (
           <p role="alert" className="border-b border-warning/30 bg-warning-soft px-4 py-2 text-sm text-warning">
@@ -340,6 +343,7 @@ function PairwiseSubmitDialog({
     setBusy(false)
     if (outcome.ok) return change(false)
     if (outcome.reason === 'pending') setProblem(`${judgeText.submit.pendingTitle}. ${judgeText.submit.pendingText}`)
+    else if (outcome.reason === 'rejected') setProblem(`${judgeText.submit.rejectedTitle(outcome.count)}. ${judgeText.submit.rejectedText}`)
     else if (outcome.reason === 'open') setServerOpen(outcome.open)
     else if (outcome.reason === 'error') setProblem(outcome.message)
   }

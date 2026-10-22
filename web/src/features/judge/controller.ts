@@ -14,6 +14,8 @@ import {
   buildSheet,
   dismissOutsideSheet,
   diffRows,
+  errorRows,
+  isRetryable,
   itemKeys,
   itemNote,
   mergeServer,
@@ -31,6 +33,7 @@ import {
   backupComparisons,
   decide,
   diffComparisons,
+  errorComparisons,
   mergeComparisons,
   openComparisons,
   pendingComparisons,
@@ -73,6 +76,8 @@ export interface DeskState {
 export type SubmitOutcome =
   | { ok: true }
   | { ok: false; reason: 'pending' }
+  /** The server refused some scores/decisions; they are not going to be sent again until fixed. */
+  | { ok: false; reason: 'rejected'; count: number }
   | { ok: false; reason: 'open'; open: number }
   | { ok: false; reason: 'missing'; missing: SubmitMissingDetails['missing'] }
   | { ok: false; reason: 'error'; message: string }
@@ -424,15 +429,16 @@ export class DeskController {
     this.persist(prev, rows)
   }
 
-  /** Makes rejected rows eligible for sending again. */
+  /** Makes rejected rows eligible for sending again (except those a locked event will refuse anyway). */
   retryRejected() {
+    const status = this.state.session?.event.status ?? 'judging'
     const rows: Rows = {}
     for (const [k, r] of Object.entries(this.state.rows)) {
-      rows[k] = r.error ? ({ ...r, error: undefined } satisfies LocalRow) : r
+      rows[k] = r.error && isRetryable(r.error, status) ? ({ ...r, error: undefined } satisfies LocalRow) : r
     }
     this.commit(rows)
     const parked = this.state.comparisons
-    const comparisons = Object.fromEntries(Object.entries(parked).map(([id, c]) => [id, c.error ? { ...c, error: undefined } : c]))
+    const comparisons = Object.fromEntries(Object.entries(parked).map(([id, c]) => [id, c.error && isRetryable(c.error, status) ? { ...c, error: undefined } : c]))
     this.set({ comparisons })
     this.persistComparisons(parked, comparisons)
     void this.flush()
@@ -542,6 +548,8 @@ export class DeskController {
   /** `releaseOpen` (pairwise): give up the pairs that were reserved but not decided. */
   async submit(releaseOpen = false): Promise<SubmitOutcome> {
     await this.flush()
+    const rejected = errorRows(this.state.rows).length + errorComparisons(this.state.comparisons).length
+    if (rejected > 0) return { ok: false, reason: 'rejected', count: rejected }
     if (pendingCount(this.state.rows) + pendingComparisons(this.state.comparisons) > 0) return { ok: false, reason: 'pending' }
     try {
       const res = await judgeApi.submit(this.token, releaseOpen)

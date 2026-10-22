@@ -24,20 +24,28 @@ export function SyncBadge({
   text,
   pending,
   fromCache,
+  canRetry = true,
   onRetry,
 }: {
   kind: IndicatorKind
   text: string
   pending: number
   fromCache: boolean
+  /** False when a retry cannot help (e.g. the event is locked and rejects every edit). */
+  canRetry?: boolean
   onRetry: () => void
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
       <span role="status" aria-live="polite" className={cn('flex min-w-0 items-center gap-1.5 text-sm font-medium [&_svg]:size-4 [&_svg]:shrink-0', TONE[kind])}>
         {ICON[kind]}
         <span className="truncate">{text}</span>
-        {pending > 0 && kind !== 'synced' && <span className="num hidden text-muted-foreground sm:inline">· {judgeText.sync.pending(pending)}</span>}
+        {pending > 0 && kind !== 'synced' && (
+          <span className="num shrink-0 text-muted-foreground">
+            <span className="sm:hidden">· {pending}</span>
+            <span className="hidden sm:inline">· {judgeText.sync.pending(pending)}</span>
+          </span>
+        )}
       </span>
       {fromCache && (
         <span className="hidden items-center gap-1 text-xs text-muted-foreground xl:flex">
@@ -45,11 +53,22 @@ export function SyncBadge({
           {judgeText.sync.offlineCopy}
         </span>
       )}
-      {kind === 'error' && (
-        <Button variant="outline" size="sm" onClick={onRetry}>
+      {kind === 'error' && canRetry && (
+        <Button variant="outline" size="sm" className="h-11 sm:h-8" onClick={onRetry}>
           {judgeText.sync.retry}
         </Button>
       )}
     </div>
+  )
+}
+
+/** Below xl the header has no room for the cached-copy marker, so it gets its own line. */
+export function CachedCopyNotice({ fromCache }: { fromCache: boolean }) {
+  if (!fromCache) return null
+  return (
+    <p role="status" className="flex items-center gap-1.5 border-b bg-muted/80 px-4 py-1.5 text-xs text-muted-foreground xl:hidden">
+      <Cloud className="size-3.5 shrink-0" aria-hidden />
+      {judgeText.sync.offlineCopyShort}
+    </p>
   )
 }

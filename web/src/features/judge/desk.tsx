@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ChevronLeft, ChevronRight, ListChecks, Lock, Send, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Criterion, JudgeSession } from '@/api/types'
@@ -12,12 +12,13 @@ import { formatX100 } from '@/lib/format'
 import { criterionApplies, groupByTrack } from '@/lib/tracks'
 import { cn } from '@/lib/utils'
 import { AlertModal } from './alert-modal'
-import { BackupAlert, BackupMenu } from './backup'
+import { BackupAlert, BackupMenu, LockedRejectedNotice } from './backup'
 import type { DeskController } from './controller'
 import { HotkeysHelp, useHotkeys } from './hotkeys'
 import { Queue } from './queue'
 import { ScoreInput } from './score-input'
 import {
+  canRetry,
   cellKey,
   errorRows,
   rejectedOutsideSheet,
@@ -32,7 +33,7 @@ import {
 } from './scoring'
 import { getSeenAlertVersion, setSeenAlertVersion } from './storage'
 import { SubmitDialog } from './submit-dialog'
-import { SyncBadge } from './sync-badge'
+import { CachedCopyNotice, SyncBadge } from './sync-badge'
 
 // Mirrors NOTE_MAX_CHARS of the server (src/routes/judge.rs).
 const NOTE_MAX_CHARS = 2000
@@ -79,6 +80,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
   const rejected = errorRows(rows).length
   const outsideSheet = useMemo(() => rejectedOutsideSheet(rows, teams, criteria).length, [rows, teams, criteria])
   const indicator = syncIndicator({ online: state.online, syncing: state.syncing, pending, rejected, syncError: state.syncError })
+  const retryAllowed = canRetry(errorRows(rows).map((r) => r.error), event.status)
   const alertOpen = event.alert.enabled && event.alert.version > seenAlert
 
   const cellOf = (l: Item) => (mode === 'team' ? cellKey(item?.id ?? '', l.id) : cellKey(l.id, item?.id ?? ''))
@@ -117,6 +119,13 @@ export function Desk({ controller, session }: { controller: DeskController; sess
     onLine: goLine,
     onSubmit: openSubmit,
   })
+
+  // A new queue item starts at the top (the scroll container is the window on mobile, <main> on desktop).
+  const mainRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 })
+    window.scrollTo({ top: 0 })
+  }, [item?.id])
 
   useEffect(() => {
     if (!line) return
@@ -162,12 +171,12 @@ export function Desk({ controller, session }: { controller: DeskController; sess
     <>
       <Backdrop url={event.background_url} overlay={event.overlay} />
       <div className="relative z-10 flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
-        <header className="sticky top-0 z-20 flex items-center gap-3 border-b bg-card/90 px-4 py-2.5 backdrop-blur lg:static">
-          <div className="min-w-0 flex-1">
+        <header className="sticky top-0 z-20 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b bg-card/90 px-4 py-2.5 backdrop-blur lg:static">
+          <div className="min-w-0 basis-full sm:flex-1 sm:basis-0">
             <h1 className="truncate text-base leading-tight font-semibold sm:text-lg">{event.title}</h1>
             <p className="truncate text-xs text-muted-foreground">{session.judge.name}</p>
           </div>
-          <SyncBadge kind={indicator.kind} text={indicator.text} pending={pending} fromCache={state.fromCache} onRetry={() => controller.retryRejected()} />
+          <SyncBadge kind={indicator.kind} text={indicator.text} pending={pending} fromCache={state.fromCache} canRetry={retryAllowed} onRetry={() => controller.retryRejected()} />
           <BackupMenu controller={controller} />
           <HotkeysHelp />
           {session.judge.submitted_at !== null ? (
@@ -176,14 +185,16 @@ export function Desk({ controller, session }: { controller: DeskController; sess
             </Badge>
           ) : (
             canSubmit && (
-              <Button size="sm" onClick={openSubmit} aria-label={judgeText.submit.button}>
+              <Button size="sm" className="h-11 sm:h-8" onClick={openSubmit}>
                 <Send />
-                <span className="hidden sm:inline">{judgeText.submit.button}</span>
+                {judgeText.submit.button}
               </Button>
             )
           )}
         </header>
 
+        <CachedCopyNotice fromCache={state.fromCache} />
+        {indicator.kind === 'error' && !retryAllowed && <LockedRejectedNotice controller={controller} />}
         <BackupAlert controller={controller} errorKind={indicator.kind === 'error'} />
         {outsideSheet > 0 && (
           <div role="alert" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
@@ -215,7 +226,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
         <div className="grid min-h-0 flex-1 lg:grid-cols-[17rem_minmax(0,1fr)_19rem] xl:grid-cols-[20rem_minmax(0,1fr)_24rem]">
           <aside className="hidden min-h-0 flex-col border-r bg-card/85 p-4 backdrop-blur lg:flex">{queue}</aside>
 
-          <main className="min-w-0 px-4 pt-5 pb-32 lg:overflow-y-auto lg:p-8">
+          <main ref={mainRef} className="min-w-0 px-4 pt-5 pb-32 lg:overflow-y-auto lg:p-8">
             {item ? (
               <div className="flex flex-col gap-5">
                 <div>
@@ -290,7 +301,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
             ) : null}
           </main>
 
-          <aside className="flex flex-col gap-6 border-t bg-card/85 p-4 backdrop-blur lg:overflow-y-auto lg:border-t-0 lg:border-l lg:p-5">
+          <aside className="flex flex-col gap-6 border-t bg-card/85 p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] backdrop-blur lg:overflow-y-auto lg:border-t-0 lg:border-l lg:p-5">
             {event.notes_enabled && item && (
               <div className="flex flex-col gap-2">
                 <label htmlFor="judge-note" className="text-sm font-semibold">

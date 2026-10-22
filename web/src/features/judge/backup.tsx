@@ -44,7 +44,7 @@ export function BackupMenu({ controller }: { controller: DeskController }) {
       <Popover.Trigger
         aria-label={t.menu}
         title={t.menu}
-        className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="inline-flex size-11 shrink-0 sm:size-9 items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         <LifeBuoy className="size-5" />
       </Popover.Trigger>
@@ -76,6 +76,19 @@ export function BackupAlert({ controller, errorKind }: { controller: DeskControl
       <Button size="sm" onClick={() => downloadBackup(controller)}>
         <Download />
         {t.download}
+      </Button>
+    </div>
+  )
+}
+
+/** The event is locked and the server refuses the rejected scores: retrying is pointless, the backup is the way out. */
+export function LockedRejectedNotice({ controller }: { controller: DeskController }) {
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+      <span className="min-w-0 flex-1">{judgeText.sync.lockedRejected}</span>
+      <Button size="sm" className="h-11 sm:h-8" onClick={() => downloadBackup(controller)}>
+        <Download />
+        {judgeText.backup.download}
       </Button>
     </div>
   )

@@ -1,3 +1,5 @@
+import { judgeText } from '@/i18n/judge'
+
 export interface ApiErrorBody {
   error: string
   message: string
@@ -44,6 +46,8 @@ async function toApiError(res: Response): Promise<ApiError> {
   } catch {
     // non-JSON error body (proxy error, network gateway) — fall through
   }
+  // Proxy/gateway pages are not JSON and their statusText is English: show a Russian message.
+  if (res.status >= 500) return new ApiError(res.status, 'http_error', judgeText.errors.serverUnavailable)
   return new ApiError(res.status, 'http_error', res.statusText || `HTTP ${res.status}`)
 }
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link2Off, ShieldAlert, WifiOff } from 'lucide-react'
+import { Download, Link2Off, ShieldAlert, WifiOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { judgeText } from '@/i18n/judge'
@@ -22,7 +22,7 @@ export function NoTokenScreen() {
   return <Centered icon={<Link2Off />} title={judgeText.noToken.title} text={judgeText.noToken.text} />
 }
 
-export function RevokedScreen({ unsynced, onRecheck, onForget }: { unsynced: number; onRecheck: () => void; onForget: () => void }) {
+export function RevokedScreen({ unsynced, onRecheck, onForget, onBackup }: { unsynced: number; onRecheck: () => void; onForget: () => void; onBackup: () => void }) {
   const [confirming, setConfirming] = useState(false)
   const t = judgeText.revoked
   const warning = unsynced > 0 ? `${t.unsynced(unsynced)} ${t.forgetWarning}` : ''
@@ -39,12 +39,22 @@ export function RevokedScreen({ unsynced, onRecheck, onForget }: { unsynced: num
           <Button variant="outline" onClick={() => setConfirming(false)}>
             {t.forgetCancel}
           </Button>
+          <Button variant="outline" onClick={onBackup}>
+            <Download />
+            {t.backup}
+          </Button>
         </>
       ) : (
         <>
           <Button variant="outline" onClick={onRecheck}>
             {t.recheck}
           </Button>
+          {unsynced > 0 && (
+            <Button variant="outline" onClick={onBackup}>
+              <Download />
+              {t.backup}
+            </Button>
+          )}
           <Button variant="ghost" onClick={unsynced > 0 ? () => setConfirming(true) : onForget}>
             {t.forget}
           </Button>

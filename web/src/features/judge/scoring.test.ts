@@ -4,6 +4,9 @@ import {
   adoptedWins,
   applyEdit,
   canDeleteStored,
+  canRetry,
+  errorMessage,
+  isRetryable,
   canOverwriteStored,
   commitDraft,
   pickOrphanKeys,
@@ -130,6 +133,21 @@ describe('commitDraft', () => {
     expect(commitDraft('15', scale)).toEqual({ kind: 'invalid' })
     expect(commitDraft('7.3', scale)).toEqual({ kind: 'invalid' })
     expect(commitDraft('abc', scale)).toEqual({ kind: 'invalid' })
+  })
+})
+
+describe('rejection handling', () => {
+  it('explains a deleted criterion or team', () => {
+    expect(errorMessage('not_found')).toMatch(/удалены/)
+  })
+  it('does not offer a retry for invalid_state once the event is locked', () => {
+    const locked = errorMessage('invalid_state')
+    expect(isRetryable(locked, 'locked')).toBe(false)
+    expect(isRetryable(locked, 'judging')).toBe(true)
+    expect(isRetryable(errorMessage('validation'), 'locked')).toBe(true)
+    expect(canRetry([locked, locked], 'locked')).toBe(false)
+    expect(canRetry([locked, errorMessage('validation')], 'locked')).toBe(true)
+    expect(canRetry([], 'locked')).toBe(true)
   })
 })
 

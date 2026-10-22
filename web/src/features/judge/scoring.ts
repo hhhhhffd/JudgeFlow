@@ -185,6 +185,8 @@ export function errorMessage(code: string | undefined): string {
       return e.validation
     case 'not_assigned':
       return e.not_assigned
+    case 'not_found':
+      return e.not_found
     default:
       return e.fallback
   }
@@ -295,6 +297,12 @@ export interface CachedIdentity {
 export function pickOrphanKeys(current: CachedIdentity, cached: CachedIdentity[]): string[] {
   return cached.filter((c) => c.k !== current.k && c.judge_id === current.judge_id && c.event_id === current.event_id).map((c) => c.k)
 }
+
+/** After the event is locked the server refuses every edit, so retrying an invalid_state rejection is pointless. */
+export const isRetryable = (error: string | undefined, status: EventStatus) => !(status !== 'judging' && error === judgeText.errors.invalid_state)
+
+/** Whether the "retry" action can achieve anything: always for plain sync errors, otherwise some rejected item must be retryable. */
+export const canRetry = (errors: (string | undefined)[], status: EventStatus) => errors.length === 0 || errors.some((e) => isRetryable(e, status))
 
 export const pendingCount = (rows: Rows) => Object.values(rows).filter((r) => r.dirty).length
 export const errorRows = (rows: Rows) => Object.values(rows).filter((r) => r.error)
