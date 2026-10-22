@@ -799,15 +799,24 @@ async fn heartbeat(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Concurrent streams one judge may hold (a few tabs/devices plus reconnects before old ones time out).
+const JUDGE_STREAMS_PER_JUDGE: usize = 5;
+
 /// How often an open judge stream re-checks that its token is still valid.
 const STREAM_RECHECK: Duration = Duration::from_secs(30);
 
 /// The stream ends when the judge is deactivated or the token is rotated, so a revoked token
 /// stops receiving hints within `STREAM_RECHECK`.
-async fn stream(State(state): State<AppState>, auth: JudgeAuth) -> impl IntoResponse {
+async fn stream(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<impl IntoResponse> {
+    let slot = state
+        .judge_streams
+        .acquire(&auth.judge_id, JUDGE_STREAMS_PER_JUDGE, usize::MAX)
+        .ok_or(AppError::RateLimited)?;
     let pool = state.pool.clone();
     let event_id = auth.event_id.clone();
     let stop = async move {
+        // Held until the stream is dropped, which frees the judge's slot.
+        let _slot = slot;
         loop {
             tokio::time::sleep(STREAM_RECHECK).await;
             let valid = sqlx::query_scalar::<_, i64>(
@@ -823,5 +832,5 @@ async fn stream(State(state): State<AppState>, auth: JudgeAuth) -> impl IntoResp
             }
         }
     };
-    state.sse.stream_until(&event_id, stop)
+    Ok(state.sse.stream_until(&event_id, stop))
 }

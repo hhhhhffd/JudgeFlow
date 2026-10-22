@@ -332,3 +332,72 @@ async fn security_headers_cover_api_and_static_responses() {
         );
     }
 }
+
+fn stream_request(uri: &str, bearer: Option<&str>) -> axum::http::Request<axum::body::Body> {
+    let mut builder = axum::http::Request::builder().uri(uri);
+    if let Some(token) = bearer {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    builder.body(axum::body::Body::empty()).unwrap()
+}
+
+#[tokio::test]
+async fn public_stream_is_capped_per_client_and_slot_is_released_on_drop() {
+    let fx = Fixture::new(1, true).await;
+    let uri = format!("/api/public/events/{}/stream", fx.event_id);
+    let open = || tower::ServiceExt::oneshot(fx.app.clone(), stream_request(&uri, None));
+    // Responses are kept alive: dropping one closes its stream and frees the slot.
+    let mut open_streams = Vec::new();
+    for _ in 0..20 {
+        let resp = open().await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        open_streams.push(resp);
+    }
+    let over = open().await.unwrap();
+    assert_eq!(over.status(), StatusCode::TOO_MANY_REQUESTS);
+    open_streams.pop();
+    assert_eq!(open().await.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn judge_stream_is_capped_per_judge() {
+    let fx = Fixture::new(2, true).await;
+    let open = |idx: usize| {
+        tower::ServiceExt::oneshot(
+            fx.app.clone(),
+            stream_request("/api/judge/stream", Some(&fx.judges[idx].1)),
+        )
+    };
+    let mut open_streams = Vec::new();
+    for _ in 0..5 {
+        let resp = open(0).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        open_streams.push(resp);
+    }
+    assert_eq!(
+        open(0).await.unwrap().status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // The cap is per judge.
+    assert_eq!(open(1).await.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn draft_background_is_not_public() {
+    let fx = Fixture::new(1, false).await;
+    let uploads = fx.state.config.data_dir.join("uploads");
+    std::fs::create_dir_all(&uploads).unwrap();
+    std::fs::write(uploads.join("bg.png"), b"png").unwrap();
+    sqlx::query("UPDATE events SET background_file = 'bg.png' WHERE id = ?")
+        .bind(&fx.event_id)
+        .execute(&fx.state.pool)
+        .await
+        .unwrap();
+    let uri = format!("/api/public/events/{}/background", fx.event_id);
+    let draft = send(&fx.app, Method::GET, &uri, None, Auth::None).await;
+    assert_eq!(draft.status, StatusCode::NOT_FOUND);
+    let started = fx.transition(json!({ "to": "judging" })).await;
+    assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
+    let live = send(&fx.app, Method::GET, &uri, None, Auth::None).await;
+    assert_eq!(live.status, StatusCode::OK);
+}

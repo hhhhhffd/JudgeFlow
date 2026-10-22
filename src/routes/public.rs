@@ -10,6 +10,7 @@ use axum::routing::get;
 use serde_json::{Value, json};
 use sqlx::SqliteConnection;
 
+use crate::auth::ClientIp;
 use crate::domain::{self, Event, load_criteria, load_event};
 use crate::error::{AppError, AppResult};
 use crate::ranking::{Mode, stage_slice};
@@ -67,17 +68,26 @@ async fn public_event(
     let show_criteria = published || event.visibility == "live_full";
 
     // Ranking is the expensive part and is shared by all viewers: cache it per event until the next
-    // change notification (the same ones that trigger SSE refetches). The async lock is held while computing so concurrent misses at one version compute once.
-    let mut cache = state.public_results.lock().await;
-    let results = match cache.get(&id).filter(|(v, _)| *v == version) {
+    // change notification (the same ones that trigger SSE refetches). The event's own async lock
+    // is held while computing so concurrent misses at one version compute once, without blocking
+    // other events.
+    let entry = state
+        .public_results
+        .lock()
+        .expect("public results cache mutex poisoned")
+        .entry(id.clone())
+        .or_default()
+        .clone();
+    let mut cached = entry.lock().await;
+    let results = match cached.as_ref().filter(|(v, _)| *v == version) {
         Some((_, results)) => results.clone(),
         None => {
             let results = public_results(&mut conn, &event).await?;
-            cache.insert(id.clone(), (version, results.clone()));
+            *cached = Some((version, results.clone()));
             results
         }
     };
-    drop(cache);
+    drop(cached);
 
     let mut event_json = json!({
         "id": event.id,
@@ -195,14 +205,28 @@ const PUBLIC_KINDS: &[ChangeKind] = &[
     ChangeKind::Stage,
 ];
 
+/// Concurrent public streams per client IP, and across all clients.
+const PUBLIC_STREAMS_PER_IP: usize = 20;
+const PUBLIC_STREAMS_TOTAL: usize = 5000;
+
 async fn stream(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
     let mut conn = state.pool.acquire().await?;
     load_public(&mut conn, &id).await?;
     drop(conn);
-    Ok(state.sse.stream_filtered(&id, PUBLIC_KINDS))
+    let slot = state
+        .public_streams
+        .acquire(&ip, PUBLIC_STREAMS_PER_IP, PUBLIC_STREAMS_TOTAL)
+        .ok_or(AppError::RateLimited)?;
+    // The slot lives in the stop future, which the response stream owns until it is dropped.
+    let hold_slot = async move {
+        let _slot = slot;
+        std::future::pending::<()>().await;
+    };
+    Ok(state.sse.stream_filtered(&id, PUBLIC_KINDS, hold_slot))
 }
 
 async fn background(
@@ -210,7 +234,7 @@ async fn background(
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
     let mut conn = state.pool.acquire().await?;
-    let event = load_event(&mut conn, &id).await?;
+    let event = load_public(&mut conn, &id).await?;
     drop(conn);
     let file = event.background_file.ok_or(AppError::NotFound)?;
     let content_type = match file.rsplit('.').next() {

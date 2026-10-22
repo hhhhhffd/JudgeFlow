@@ -40,6 +40,55 @@ const ALL_KINDS: [ChangeKind; 8] = [
     ChangeKind::Stage,
 ];
 
+/// Counts open SSE streams per key (client IP, judge id) and in total, so one client cannot
+/// exhaust file descriptors and memory with endless connections.
+#[derive(Clone, Default)]
+pub struct StreamLimiter {
+    counts: Arc<Mutex<StreamCounts>>,
+}
+
+#[derive(Default)]
+struct StreamCounts {
+    per_key: HashMap<String, usize>,
+    total: usize,
+}
+
+/// A held stream slot; dropping it (when the response stream is dropped) frees the slot.
+pub struct StreamSlot {
+    counts: Arc<Mutex<StreamCounts>>,
+    key: String,
+}
+
+impl StreamLimiter {
+    /// Takes a slot for `key`, or `None` when it already holds `per_key_max` streams or `total_max`
+    /// streams are open overall.
+    pub fn acquire(&self, key: &str, per_key_max: usize, total_max: usize) -> Option<StreamSlot> {
+        let mut counts = self.counts.lock().expect("stream limiter mutex poisoned");
+        if counts.total >= total_max || counts.per_key.get(key).is_some_and(|n| *n >= per_key_max) {
+            return None;
+        }
+        counts.total += 1;
+        *counts.per_key.entry(key.to_string()).or_default() += 1;
+        Some(StreamSlot {
+            counts: self.counts.clone(),
+            key: key.to_string(),
+        })
+    }
+}
+
+impl Drop for StreamSlot {
+    fn drop(&mut self) {
+        let mut counts = self.counts.lock().expect("stream limiter mutex poisoned");
+        counts.total -= 1;
+        if let Some(n) = counts.per_key.get_mut(&self.key) {
+            *n -= 1;
+            if *n == 0 {
+                counts.per_key.remove(&self.key);
+            }
+        }
+    }
+}
+
 /// One lazily created broadcast channel per event.
 #[derive(Clone)]
 pub struct SseHub {
@@ -108,14 +157,18 @@ impl SseHub {
         self.stream_until(event_id, std::future::pending())
     }
 
-    /// Like [`stream`](Self::stream), but only delivers hints of the `allowed` kinds (public
-    /// viewers do not need judge presence or alerts).
-    pub fn stream_filtered(
+    /// Like [`stream_until`](Self::stream_until), but only delivers hints of the `allowed` kinds
+    /// (public viewers do not need judge presence or alerts).
+    pub fn stream_filtered<F>(
         &self,
         event_id: &str,
         allowed: &'static [ChangeKind],
-    ) -> Sse<impl Stream<Item = Result<Event, Infallible>> + use<>> {
-        self.stream_inner(event_id, allowed, std::future::pending())
+        stop: F,
+    ) -> Sse<impl Stream<Item = Result<Event, Infallible>> + use<F>>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.stream_inner(event_id, allowed, stop)
     }
 
     /// Like [`stream`](Self::stream), but also ends the response once `stop` completes.
@@ -175,7 +228,7 @@ mod tests {
     async fn filtered_stream_skips_kinds_that_are_not_allowed() {
         let hub = SseHub::default();
         let response = hub
-            .stream_filtered("e", &[ChangeKind::Scores])
+            .stream_filtered("e", &[ChangeKind::Scores], std::future::pending())
             .into_response();
         hub.notify("e", ChangeKind::Presence);
         hub.notify("e", ChangeKind::Alert);
@@ -192,5 +245,17 @@ mod tests {
             !text.contains("presence") && !text.contains("alert"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn stream_limiter_caps_per_key_and_total_and_releases_on_drop() {
+        let limiter = StreamLimiter::default();
+        let a1 = limiter.acquire("a", 2, 3).expect("first slot");
+        let _a2 = limiter.acquire("a", 2, 3).expect("second slot");
+        assert!(limiter.acquire("a", 2, 3).is_none(), "per-key cap");
+        let _b1 = limiter.acquire("b", 2, 3).expect("other key");
+        assert!(limiter.acquire("c", 2, 3).is_none(), "total cap");
+        drop(a1);
+        assert!(limiter.acquire("c", 2, 3).is_some(), "slot released");
     }
 }

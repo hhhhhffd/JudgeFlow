@@ -512,7 +512,7 @@ async fn judge_link_works_until_rotated() {
 
 #[tokio::test]
 async fn background_upload_checks_magic_bytes_and_replaces_old_file() {
-    let fx = Fixture::new(0, false).await;
+    let fx = Fixture::new(1, false).await;
     let id = &fx.event_id;
     let path = format!("/api/events/{id}/background");
     let cookie = Auth::Cookie(&fx.cookie);
@@ -577,6 +577,11 @@ async fn background_upload_checks_magic_bytes_and_replaces_old_file() {
             .unwrap()
             .starts_with(&public)
     );
+    // Drafts are not public, backgrounds included.
+    let draft = send(&fx.app, Method::GET, &public, None, Auth::None).await;
+    assert_eq!(draft.status, StatusCode::NOT_FOUND);
+    let started = fx.transition(json!({ "to": "judging" })).await;
+    assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
     let served = send(&fx.app, Method::GET, &public, None, Auth::None).await;
     assert_eq!(served.status, StatusCode::OK);
     assert_eq!(served.headers["content-type"], "image/png");
