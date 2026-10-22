@@ -12,6 +12,8 @@
   --signal-foreground: oklch(0.24 0.06 70);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   color: var(--foreground);
+  /* The podium glow extends past its card; it must never grow the page. */
+  overflow: clip;
 }
 
 /* Widget mode: nothing but the content, on a transparent canvas (OBS browser source). */
@@ -101,6 +103,9 @@
 }
 
 /* Podium: 2-1-3 columns on landscape screens, a stacked list in portrait. */
+.stage-podium > li {
+  min-width: 0;
+}
 .stage-podium {
   display: grid;
   gap: 1.1rem;
@@ -116,12 +121,12 @@
   .stage-slot-1 { grid-column: 2; grid-row: 1; }
   .stage-slot-2 { grid-column: 1; grid-row: 1; }
   .stage-slot-3 { grid-column: 3; grid-row: 1; }
-  .stage-slot-1 .stage-plinth { height: 32vh; }
-  .stage-slot-2 .stage-plinth { height: 23vh; }
-  .stage-slot-3 .stage-plinth { height: 16vh; }
-  .stage-slot-1 .stage-numeral { font-size: 22vh; }
-  .stage-slot-2 .stage-numeral { font-size: 16vh; }
-  .stage-slot-3 .stage-numeral { font-size: 11vh; }
+  .stage-slot-1 .stage-plinth { height: 20vh; }
+  .stage-slot-2 .stage-plinth { height: 14vh; }
+  .stage-slot-3 .stage-plinth { height: 9vh; }
+  .stage-slot-1 .stage-numeral { font-size: 14vh; }
+  .stage-slot-2 .stage-numeral { font-size: 10vh; }
+  .stage-slot-3 .stage-numeral { font-size: 7vh; }
 }
 
 .stage-ticks {

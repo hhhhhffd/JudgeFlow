@@ -108,8 +108,8 @@ export default function LiveBoard() {
               </span>
             )}
           </div>
-          <h1 className="text-4xl leading-[1.05] font-semibold tracking-tight text-balance sm:text-5xl lg:text-7xl">{event.title}</h1>
-          {event.description && <p className="max-w-4xl text-lg whitespace-pre-line text-foreground/75 lg:text-2xl">{event.description}</p>}
+          <h1 className="text-4xl leading-[1.05] font-semibold tracking-tight text-balance sm:text-5xl [overflow-wrap:anywhere] lg:text-7xl">{event.title}</h1>
+          {event.description && <p className="max-w-4xl text-lg whitespace-pre-line [overflow-wrap:anywhere] text-foreground/75 lg:text-2xl">{event.description}</p>}
           {results?.mode === 'provisional' && <p className="max-w-4xl text-base text-foreground/75 lg:text-xl">{liveText.provisional.text}</p>}
         </header>
 
@@ -140,7 +140,7 @@ function Board({ event, results }: { event: PublicEvent; results: PublicRanking 
     <>
       {groups.map((g) => (
         <section key={g.track?.id ?? 'none'} aria-label={withHeadings ? (g.track?.name ?? liveText.table.noTrack) : undefined} className="flex flex-col gap-8">
-          {withHeadings && <h2 className="text-3xl font-semibold tracking-tight lg:text-5xl">{g.track?.name ?? liveText.table.noTrack}</h2>}
+          {withHeadings && <h2 className="text-3xl font-semibold tracking-tight [overflow-wrap:anywhere] lg:text-5xl">{g.track?.name ?? liveText.table.noTrack}</h2>}
           <GroupBoard event={event} rows={g.rows} quorum={results.quorum} criteria={criteriaOfGroup(event.criteria ?? [], g.track)} />
         </section>
       ))}
@@ -165,13 +165,13 @@ function GroupBoard({ event, rows, quorum, criteria }: { event: PublicEvent; row
 
       <section className="overflow-hidden rounded-2xl border bg-card/90 backdrop-blur">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[34rem] border-collapse text-left">
+          <table className="w-full border-collapse md:min-w-[34rem] text-left">
             <thead>
               <tr className="border-b text-sm text-muted-foreground lg:text-base">
-                <th scope="col" className="w-24 px-4 py-3 font-medium lg:px-6">
+                <th scope="col" className="w-14 px-3 py-3 font-medium sm:w-24 sm:px-4 lg:px-6">
                   {liveText.table.rank}
                 </th>
-                <th scope="col" className="px-4 py-3 font-medium">
+                <th scope="col" className="px-3 py-3 font-medium sm:px-4">
                   {teamsHeading}
                 </th>
                 {columns.map((c) => (
@@ -179,7 +179,7 @@ function GroupBoard({ event, rows, quorum, criteria }: { event: PublicEvent; row
                     {c.label}
                   </th>
                 ))}
-                <th scope="col" className="px-4 py-3 text-right font-medium lg:px-6">
+                <th scope="col" className="px-3 py-3 text-right font-medium sm:px-4 lg:px-6">
                   {liveText.table.score}
                 </th>
               </tr>
@@ -187,11 +187,11 @@ function GroupBoard({ event, rows, quorum, criteria }: { event: PublicEvent; row
             <tbody>
               {rows.map((row) => (
                 <tr key={row.team_id} className="border-b last:border-b-0">
-                  <td className="num px-4 py-4 text-2xl font-semibold lg:px-6 lg:text-4xl">
+                  <td className="num px-3 py-4 text-xl font-semibold sm:px-4 sm:text-2xl lg:px-6 lg:text-4xl">
                     <RankMark row={row} />
                   </td>
-                  <td className="px-4 py-4">
-                    <p className="text-xl font-medium lg:text-3xl">{row.team_name}</p>
+                  <td className="min-w-0 px-3 py-4 sm:px-4">
+                    <p className="text-lg font-medium [overflow-wrap:anywhere] sm:text-xl lg:text-3xl">{row.team_name}</p>
                     <RowNote row={row} quorum={quorum} />
                   </td>
                   {columns.map((c) => (
@@ -199,7 +199,7 @@ function GroupBoard({ event, rows, quorum, criteria }: { event: PublicEvent; row
                       {c.value(row)}
                     </td>
                   ))}
-                  <td className="num px-4 py-4 text-right font-mono text-2xl font-semibold lg:px-6 lg:text-5xl">{formatX100(row.score_x100)}</td>
+                  <td className="num px-3 py-4 text-right font-mono text-xl font-semibold whitespace-nowrap sm:px-4 sm:text-2xl lg:px-6 lg:text-5xl">{formatX100(row.score_x100)}</td>
                 </tr>
               ))}
             </tbody>
@@ -245,13 +245,13 @@ const PODIUM_STYLE = [
 function PodiumCard({ row, index }: { row: PublicRankingRow; index: number }) {
   const s = PODIUM_STYLE[index]!
   return (
-    <li className={cn('flex flex-col justify-between gap-6 rounded-2xl border p-6 backdrop-blur md:max-w-lg md:flex-1 lg:p-8', s.order, s.height, s.tone)}>
-      <div>
+    <li className={cn('flex flex-col justify-between gap-6 rounded-2xl border p-6 backdrop-blur min-w-0 md:max-w-lg md:flex-1 lg:p-8', s.order, s.height, s.tone)}>
+      <div className="min-w-0">
         <p className="num text-lg font-medium text-muted-foreground lg:text-2xl">
           {liveText.podium.place(row.rank ?? index + 1)}
           {row.tie && <span className="ml-2">· {liveText.table.tie}</span>}
         </p>
-        <p className="mt-2 text-3xl leading-tight font-semibold text-balance lg:text-5xl">{row.team_name}</p>
+        <p className="mt-2 text-3xl leading-tight font-semibold text-balance [overflow-wrap:anywhere] lg:text-5xl">{row.team_name}</p>
       </div>
       <p className="num font-mono text-5xl font-semibold lg:text-7xl">{formatX100(row.score_x100)}</p>
     </li>

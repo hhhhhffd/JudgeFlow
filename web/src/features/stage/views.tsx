@@ -58,12 +58,12 @@ function SlotContent({ place, group, first }: { place: number; group: RankGroup;
           <div
             key={row.team_id}
             className={cn(
-              'rounded-2xl border bg-card/90 px-6 py-5 backdrop-blur-sm wide:text-center',
+              'rounded-2xl border bg-card/90 px-4 py-4 backdrop-blur-sm sm:px-6 sm:py-5 wide:text-center',
               first ? 'border-signal/70 shadow-[0_0_3rem_-0.5rem_oklch(0.82_0.15_82/0.5)]' : 'border-border',
             )}
           >
-            <p className={cn('leading-[1.05] font-bold text-balance break-words', first ? 'text-[clamp(2rem,3.4vw,3.6rem)]' : 'text-[clamp(1.7rem,2.8vw,3rem)]')}>{row.team_name}</p>
-            <p className={cn('num mt-2 leading-none font-extrabold', first ? 'text-[clamp(2.4rem,4.2vw,4.4rem)] text-signal' : 'text-[clamp(2rem,3.4vw,3.6rem)]')}>
+            <p className={cn('leading-[1.05] font-bold text-balance [overflow-wrap:anywhere] hyphens-auto', first ? 'text-[clamp(1.5rem,min(3.4vw,4.6vh),3.6rem)]' : 'text-[clamp(1.3rem,min(2.8vw,4vh),3rem)]')}>{row.team_name}</p>
+            <p className={cn('num mt-2 leading-none font-extrabold', first ? 'text-[clamp(1.9rem,min(4.2vw,5.5vh),4.4rem)] text-signal' : 'text-[clamp(1.5rem,min(3.4vw,6vh),3.6rem)]')}>
               {row.score_x100 === null ? stageText.noScore : formatX100(row.score_x100)}
             </p>
             <TieMark row={row} />
@@ -81,7 +81,7 @@ function SlotContent({ place, group, first }: { place: number; group: RankGroup;
         <div className={cn('stage-ticks absolute inset-x-0 top-0 h-2', first ? 'text-signal' : 'text-foreground/60')} />
         <span className={cn('stage-numeral num leading-none font-extrabold', first ? 'text-signal' : 'text-foreground/35')}>{place}</span>
       </div>
-      <span aria-hidden className={cn('num order-first w-[3.2rem] shrink-0 self-center text-center text-[3.4rem] leading-none font-extrabold wide:hidden', first ? 'text-signal' : 'text-foreground/40')}>
+      <span aria-hidden className={cn('num order-first w-[2.2rem] shrink-0 self-center text-center text-[2.4rem] sm:w-[3.2rem] sm:text-[3.4rem] leading-none font-extrabold wide:hidden', first ? 'text-signal' : 'text-foreground/40')}>
         {place}
       </span>
     </>
@@ -138,7 +138,7 @@ function LowerRow({ row }: { row: PublicRankingRow }) {
   return (
     <li className={cn('flex items-baseline gap-5 rounded-xl border bg-card/80 px-5 py-3 backdrop-blur-sm', fresh && 'stage-fresh-row')}>
       <span className="num w-[3.5rem] text-[2rem] font-bold text-muted-foreground">{row.rank}</span>
-      <span className="min-w-0 flex-1 text-[1.8rem] font-semibold break-words">{row.team_name}</span>
+      <span className="min-w-0 flex-1 text-[1.4rem] font-semibold [overflow-wrap:anywhere] hyphens-auto sm:text-[1.8rem]">{row.team_name}</span>
       <span className="num text-[2rem] font-bold">{formatX100(row.score_x100)}</span>
     </li>
   )
@@ -200,7 +200,7 @@ function BoardRow({
         {row.tie && <span className="sr-only">{stageText.tie}</span>}
       </span>
       <span className="min-w-0">
-        <span className="block text-[1.9em] leading-tight font-semibold break-words">{row.team_name}</span>
+        <span className="block text-[1.9em] leading-tight font-semibold [overflow-wrap:anywhere] hyphens-auto">{row.team_name}</span>
         {(row.tie || row.score_x100 === null) && (
           <span className="block text-[0.9em] text-muted-foreground">{row.score_x100 === null ? stageText.noScore : stageText.tie}</span>
         )}

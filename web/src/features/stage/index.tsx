@@ -124,7 +124,7 @@ function StageBoard({ data, widget, offline }: { data: StageResponse; widget: bo
       {showHeader && (
         <header className="mb-[2.5vmin] flex flex-col gap-2">
           <p className="text-[1rem] font-semibold tracking-[0.28em] text-signal uppercase">{stageText.eyebrow}</p>
-          <h1 className="text-[clamp(1.8rem,3.4vw,3.4rem)] leading-[1.05] font-extrabold tracking-tight text-balance">{event.title}</h1>
+          <h1 className="text-[clamp(1.8rem,3.4vw,3.4rem)] leading-[1.05] font-extrabold tracking-tight text-balance [overflow-wrap:anywhere]">{event.title}</h1>
           {trackName && <p className="text-[clamp(1.2rem,2vw,2rem)] font-semibold text-signal">{trackName}</p>}
         </header>
       )}
