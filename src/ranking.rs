@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use num_traits::ToPrimitive;
+use num_traits::{Signed, ToPrimitive};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,18 +335,23 @@ fn ratio(numer: i64, denom: i64) -> BigRational {
     BigRational::new(BigInt::from(numer), BigInt::from(denom))
 }
 
-/// Converts a 0..=100 score to hundredths, rounded half-up.
+/// Converts a 0..=100 score (centered scores may be negative) to hundredths, rounded half away from zero.
 fn to_hundredths(score: &BigRational) -> i64 {
     round_half_up(&(score * BigRational::from_integer(BigInt::from(100))))
 }
 
-/// Rounds a non-negative rational to the nearest integer, halves up.
+/// Rounds a rational to the nearest integer, halves away from zero.
 fn round_half_up(value: &BigRational) -> i64 {
-    (value + ratio(1, 2))
+    let magnitude = (value.abs() + ratio(1, 2))
         .floor()
         .to_integer()
         .to_i64()
-        .expect("scores are bounded by criterion max values and fit in i64")
+        .expect("scores are bounded by criterion max values and fit in i64");
+    if value < &BigRational::from_integer(BigInt::from(0)) {
+        -magnitude
+    } else {
+        magnitude
+    }
 }
 
 /// Which ranking rows the stage screen may show (SPEC section 11).
@@ -394,6 +399,19 @@ pub fn stage_slice(ranks: &[Option<u32>], view: &str, top_n: u32, revealed: u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rounding_is_half_away_from_zero() {
+        let value = |numer: i64| ratio(numer, 2);
+        assert_eq!(round_half_up(&value(1)), 1);
+        assert_eq!(round_half_up(&value(-1)), -1);
+        assert_eq!(round_half_up(&value(-3)), -2);
+        assert_eq!(round_half_up(&ratio(-3, 10)), 0);
+        // +-33.335 on the 0..100 scale is +-3333.5 hundredths.
+        let score = ratio(33_335, 1000);
+        assert_eq!(to_hundredths(&score), 3334);
+        assert_eq!(to_hundredths(&-score), -3334);
+    }
 
     fn criterion(id: &str, max_x100: i64, weight: i64) -> CriterionInput {
         CriterionInput {
