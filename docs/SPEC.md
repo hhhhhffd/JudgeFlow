@@ -23,12 +23,13 @@ Source of truth for the rewrite. The previous implementation lives on the `v1` b
     the request `Host` (+ `X-Forwarded-Proto`).
   - `JUDGEFLOW_SECRET_KEY` — optional; key material for encrypting TOTP secrets. If unset, a random
     key is generated once into `DATA_DIR/secret.key` (mode 0600) and reused.
-  - `JUDGEFLOW_TRUST_PROXY` — bool, default `false`. When true, the client IP used for rate limiting
-    is taken from `CF-Connecting-IP`, else the LAST `X-Forwarded-For` entry (appended by the trusted proxy;
-    earlier entries are client-controlled), else the peer address. Enable only behind a proxy/tunnel
-    (e.g. Cloudflare Tunnel) that sets these headers, and make sure the app port is NOT reachable directly
-    (bind to `127.0.0.1` or do not publish it); otherwise clients could spoof their IP.
-    When false, only the peer address is used.
+  - `JUDGEFLOW_TRUST_PROXY` — `none` (alias `false`, default), `cloudflare` or `xff`; any other value (including
+    the legacy `true`) fails at startup. Selects the client IP used for rate limiting and SSE caps: `none` — the
+    peer address; `cloudflare` — only `CF-Connecting-IP`; `xff` — only the LAST `X-Forwarded-For` entry (appended by
+    the trusted proxy; earlier entries are client-controlled). The peer address is the fallback when the header is
+    absent. In the proxy modes `X-Forwarded-Proto: https` also makes the session cookie `Secure`. Use the proxy modes
+    only behind a proxy/tunnel (e.g. Cloudflare Tunnel) that sets the header, and make sure the app port is NOT
+    reachable directly (bind to `127.0.0.1` or do not publish it); otherwise clients could spoof their IP.
   - `RUST_LOG` — tracing filter, default `info`.
 - CLI:
   - `judgeflow serve` (default when no subcommand)
@@ -174,7 +175,7 @@ ends otherwise. Request logs redact token path segments (`/j/***`, `/invite/***`
 - `GET /api/setup/first-start` → `204` if no admin exists, else `404`.
 - `POST /api/setup/first-start/begin` `{setup_password, name}` → `{enrollment_token, otpauth_uri, secret}`; 404 if an admin exists; 401 wrong password. The setup password is random, generated at startup while no admin exists, and printed to the log.
 - `POST /api/setup/first-start/complete` `{enrollment_token, code}` → creates the owner, sets session cookie → `{admin}`.
-- `POST /api/auth/login` `{name, code}` → sets cookie, `{admin}`; 401 generic. TOTP: SHA1, 6 digits, 30 s, window ±1, replay-protected via `totp_last_step` (in a write transaction). Rate limit: 5/min per name and 20/min per IP (in-memory).
+- `POST /api/auth/login` `{name, code}` → sets cookie, `{admin}`; 401 generic. TOTP: SHA1, 6 digits, 30 s, window ±1, replay-protected via `totp_last_step` (in a write transaction). Rate limit: 5/min per client IP (in-memory; deliberately not per name, so nobody can lock an admin out). An unknown name costs the same decrypt + TOTP work as a known one (no timing oracle).
 - `POST /api/auth/logout` → 204. `GET /api/auth/me` → `{admin}` or 401.
 - `admin` object: `{id, name, role, created_at}`.
 

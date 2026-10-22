@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
@@ -5,6 +6,7 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use judgeflow::auth::JudgeAuth;
+use judgeflow::config::{Config, TrustProxy};
 use judgeflow::crypto::hash_token;
 use judgeflow::state::AppState;
 use serde_json::{Value, json};
@@ -326,24 +328,168 @@ async fn concurrent_logins_accept_a_code_once() {
     assert_eq!(ok, 1);
 }
 
+/// Login attempt from `ip`, as reported by Cloudflare's `CF-Connecting-IP`.
+async fn login_from(app: &Router, ip: &str, name: &str, code: &str) -> StatusCode {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("cf-connecting-ip", ip)
+        .body(Body::from(
+            json!({ "name": name, "code": code }).to_string(),
+        ))
+        .unwrap();
+    app.clone().oneshot(request).await.unwrap().status()
+}
+
+async fn setup_with_proxy(mode: TrustProxy) -> (AppState, Router) {
+    let mut state = AppState::for_tests().await;
+    state.config = Arc::new(Config {
+        trust_proxy: mode,
+        ..(*state.config).clone()
+    });
+    let app = judgeflow::build_app(state.clone());
+    (state, app)
+}
+
 #[tokio::test]
-async fn login_is_rate_limited_per_name() {
-    let (_, app) = setup().await;
-    let body = json!({ "name": "ghost", "code": "000000" });
+async fn login_is_rate_limited_per_ip_not_per_name() {
+    let (state, app) = setup_with_proxy(TrustProxy::Cloudflare).await;
+    let (_, secret) = create_owner(&state, &app, "Owner").await;
+    // Five failures from one IP exhaust that IP's budget...
     for _ in 0..5 {
-        let r = send(
+        let status = login_from(&app, "1.1.1.1", "Owner", "000000").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(
+        login_from(&app, "1.1.1.1", "Owner", "000000").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // ...but do not lock the owner out for everybody else.
+    assert_eq!(
+        login_from(&app, "2.2.2.2", "Owner", &code_next(&secret)).await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn unknown_name_is_indistinguishable_from_wrong_code() {
+    let (state, app) = setup().await;
+    create_owner(&state, &app, "Owner").await;
+    let unknown = send(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        Some(json!({ "name": "ghost", "code": "000000" })),
+        None,
+    )
+    .await;
+    let wrong = send(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        Some(json!({ "name": "Owner", "code": "000000" })),
+        None,
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(unknown.status, wrong.status);
+    assert_eq!(unknown.body, wrong.body);
+}
+
+#[tokio::test]
+async fn trust_proxy_modes_pick_the_rate_limit_key() {
+    // cloudflare: X-Forwarded-For is ignored, so every request shares the peer key.
+    let (_, app) = setup_with_proxy(TrustProxy::Cloudflare).await;
+    for i in 0..6 {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", format!("9.9.9.{i}"))
+            .body(Body::from(
+                json!({ "name": "g", "code": "000000" }).to_string(),
+            ))
+            .unwrap();
+        let status = app.clone().oneshot(request).await.unwrap().status();
+        let expected = if i < 5 {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::TOO_MANY_REQUESTS
+        };
+        assert_eq!(status, expected, "request {i}");
+    }
+    // xff: the rightmost entry is the key; a spoofed leftmost entry does not help.
+    let (_, app) = setup_with_proxy(TrustProxy::Xff).await;
+    for i in 0..6 {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", format!("9.9.9.{i}, 8.8.8.8"))
+            .header("cf-connecting-ip", format!("7.7.7.{i}"))
+            .body(Body::from(
+                json!({ "name": "g", "code": "000000" }).to_string(),
+            ))
+            .unwrap();
+        let status = app.clone().oneshot(request).await.unwrap().status();
+        let expected = if i < 5 {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::TOO_MANY_REQUESTS
+        };
+        assert_eq!(status, expected, "request {i}");
+    }
+}
+
+#[tokio::test]
+async fn session_cookie_is_secure_for_https_behind_trusted_proxy() {
+    async fn first_start_cookie(mode: TrustProxy, proto: Option<&str>) -> String {
+        let (state, app) = setup_with_proxy(mode).await;
+        let begin = send(
             &app,
             Method::POST,
-            "/api/auth/login",
-            Some(body.clone()),
+            "/api/setup/first-start/begin",
+            Some(json!({ "setup_password": &*state.setup_password, "name": "Owner" })),
             None,
         )
         .await;
-        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+        let secret = begin.body["secret"].as_str().unwrap().to_string();
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/api/setup/first-start/complete")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(proto) = proto {
+            builder = builder.header("x-forwarded-proto", proto);
+        }
+        let body = json!({ "enrollment_token": begin.body["enrollment_token"], "code": code_now(&secret) });
+        let response = app
+            .clone()
+            .oneshot(builder.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .to_string()
     }
-    let limited = send(&app, Method::POST, "/api/auth/login", Some(body), None).await;
-    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(limited.body["error"], "rate_limited");
+    assert!(
+        first_start_cookie(TrustProxy::Xff, Some("https"))
+            .await
+            .contains("; Secure")
+    );
+    assert!(
+        !first_start_cookie(TrustProxy::Xff, Some("http"))
+            .await
+            .contains("Secure")
+    );
+    // Without a trusted proxy the header is client-controlled and ignored.
+    assert!(
+        !first_start_cookie(TrustProxy::None, Some("https"))
+            .await
+            .contains("Secure")
+    );
 }
 
 #[tokio::test]

@@ -3,7 +3,7 @@ services:
     build: .
     image: judgeflow:local
     restart: unless-stopped
-    # With JUDGEFLOW_TRUST_PROXY=true behind a tunnel/reverse proxy on this host, publish on loopback only
+    # With JUDGEFLOW_TRUST_PROXY=cloudflare|xff behind a tunnel/reverse proxy on this host, publish on loopback only
     # ("127.0.0.1:8080:8080"): the app trusts forwarded-IP headers, so it must not be reachable directly.
     ports:
       - "${HOST_PORT:-8080}:8080"

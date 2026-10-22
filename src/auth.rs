@@ -12,7 +12,7 @@ use serde_json::json;
 use sqlx::SqliteConnection;
 
 use crate::audit;
-use crate::config::Config;
+use crate::config::{Config, TrustProxy};
 use crate::crypto::{hash_token, random_token};
 use crate::db::begin_write;
 use crate::error::{AppError, AppResult};
@@ -74,8 +74,8 @@ pub async fn create_session(conn: &mut SqliteConnection, admin_id: &str) -> AppR
 }
 
 /// `Set-Cookie` value that installs the session cookie.
-pub fn session_cookie(config: &Config, token: &str) -> String {
-    let secure = if config.secure_cookies() {
+pub fn session_cookie(config: &Config, headers: &HeaderMap, token: &str) -> String {
+    let secure = if config.secure_cookies(headers) {
         "; Secure"
     } else {
         ""
@@ -87,8 +87,8 @@ pub fn session_cookie(config: &Config, token: &str) -> String {
 }
 
 /// `Set-Cookie` value that removes the session cookie.
-pub fn clear_session_cookie(config: &Config) -> String {
-    let secure = if config.secure_cookies() {
+pub fn clear_session_cookie(config: &Config, headers: &HeaderMap) -> String {
+    let secure = if config.secure_cookies(headers) {
         "; Secure"
     } else {
         ""
@@ -199,8 +199,9 @@ impl FromRequestParts<AppState> for JudgeAuth {
     }
 }
 
-/// Client IP for rate limiting. With `JUDGEFLOW_TRUST_PROXY` it comes from `CF-Connecting-IP`,
-/// else the first `X-Forwarded-For` entry; otherwise (or when absent) it is the peer address.
+/// Client IP for rate limiting, per `JUDGEFLOW_TRUST_PROXY`: the peer address (`none`),
+/// `CF-Connecting-IP` (`cloudflare`) or the rightmost `X-Forwarded-For` entry (`xff`). The peer
+/// address is also the fallback when the trusted header is absent.
 pub struct ClientIp(pub String);
 
 impl FromRequestParts<AppState> for ClientIp {
@@ -222,16 +223,19 @@ impl FromRequestParts<AppState> for ClientIp {
     }
 }
 
-fn resolve_client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust_proxy: bool) -> String {
-    if trust_proxy {
-        let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
-        let forwarded = header("cf-connecting-ip")
-            .or_else(|| header("x-forwarded-for").and_then(|v| v.rsplit(',').next()))
-            .map(str::trim)
-            .filter(|v| !v.is_empty());
-        if let Some(ip) = forwarded {
-            return ip.to_string();
-        }
+fn resolve_client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust_proxy: TrustProxy) -> String {
+    let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
+    // The rightmost X-Forwarded-For entry is appended by the trusted proxy; earlier ones are
+    // client-controlled.
+    let forwarded = match trust_proxy {
+        TrustProxy::None => None,
+        TrustProxy::Cloudflare => header("cf-connecting-ip"),
+        TrustProxy::Xff => header("x-forwarded-for").and_then(|v| v.rsplit(',').next()),
+    }
+    .map(str::trim)
+    .filter(|v| !v.is_empty());
+    if let Some(ip) = forwarded {
+        return ip.to_string();
     }
     peer.map(|ip| ip.to_string())
         .unwrap_or_else(|| "unknown".to_string())
@@ -286,21 +290,44 @@ mod client_ip_tests {
             ("x-forwarded-for", "2.2.2.2"),
         ]);
         let peer = Some("10.0.0.1".parse().unwrap());
-        assert_eq!(resolve_client_ip(&h, peer, false), "10.0.0.1");
+        assert_eq!(resolve_client_ip(&h, peer, TrustProxy::None), "10.0.0.1");
     }
 
     #[test]
-    fn trusted_proxy_prefers_cloudflare_then_forwarded_for_then_peer() {
+    fn cloudflare_mode_uses_only_cf_connecting_ip() {
         let peer = Some("10.0.0.1".parse().unwrap());
         let both = headers(&[
             ("cf-connecting-ip", "1.1.1.1"),
             ("x-forwarded-for", "2.2.2.2"),
         ]);
-        assert_eq!(resolve_client_ip(&both, peer, true), "1.1.1.1");
-        let xff = headers(&[("x-forwarded-for", "2.2.2.2, 3.3.3.3")]);
-        // The first entry is client-controlled; the last one is appended by the trusted proxy.
-        assert_eq!(resolve_client_ip(&xff, peer, true), "3.3.3.3");
-        assert_eq!(resolve_client_ip(&HeaderMap::new(), peer, true), "10.0.0.1");
-        assert_eq!(resolve_client_ip(&HeaderMap::new(), None, true), "unknown");
+        assert_eq!(
+            resolve_client_ip(&both, peer, TrustProxy::Cloudflare),
+            "1.1.1.1"
+        );
+        let xff_only = headers(&[("x-forwarded-for", "2.2.2.2")]);
+        assert_eq!(
+            resolve_client_ip(&xff_only, peer, TrustProxy::Cloudflare),
+            "10.0.0.1"
+        );
+    }
+
+    #[test]
+    fn xff_mode_uses_only_the_rightmost_entry() {
+        let peer = Some("10.0.0.1".parse().unwrap());
+        // The leftmost entries are client-controlled; the last one is appended by the proxy.
+        let xff = headers(&[
+            ("cf-connecting-ip", "1.1.1.1"),
+            ("x-forwarded-for", "2.2.2.2, 3.3.3.3"),
+        ]);
+        assert_eq!(resolve_client_ip(&xff, peer, TrustProxy::Xff), "3.3.3.3");
+        let cf_only = headers(&[("cf-connecting-ip", "1.1.1.1")]);
+        assert_eq!(
+            resolve_client_ip(&cf_only, peer, TrustProxy::Xff),
+            "10.0.0.1"
+        );
+        assert_eq!(
+            resolve_client_ip(&HeaderMap::new(), None, TrustProxy::Xff),
+            "unknown"
+        );
     }
 }

@@ -17,8 +17,8 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::totp;
 
-const LOGIN_LIMIT_PER_NAME: u32 = 5;
-const LOGIN_LIMIT_PER_IP: u32 = 20;
+/// Limited per client IP only: a per-name limit would let anyone lock a known admin (the owner) out.
+const LOGIN_LIMIT_PER_IP: u32 = 5;
 const LOGIN_WINDOW: Duration = Duration::from_secs(60);
 const BAD_LOGIN: &str = "Неверное имя или код";
 
@@ -46,17 +46,13 @@ struct LoginRequest {
 async fn login(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<impl IntoResponse> {
     let name = req.name.trim();
     if !state
         .rate_limiter
         .allow(&format!("login:ip:{ip}"), LOGIN_LIMIT_PER_IP, LOGIN_WINDOW)
-        || !state.rate_limiter.allow(
-            &format!("login:name:{}", name.to_lowercase()),
-            LOGIN_LIMIT_PER_NAME,
-            LOGIN_WINDOW,
-        )
     {
         return Err(AppError::RateLimited);
     }
@@ -70,8 +66,14 @@ async fn login(
     )
     .bind(name)
     .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(AppError::BadCredentials(BAD_LOGIN))?;
+    .await?;
+    let Some(row) = row else {
+        // Do the same decrypt + TOTP work as for a real admin so timing does not reveal
+        // whether the name exists.
+        let dummy = totp::generate(&state.crypto, name)?;
+        totp::check_code(&state.crypto, &dummy.encrypted, name, &req.code)?;
+        return Err(AppError::BadCredentials(BAD_LOGIN));
+    };
     let LoginRow {
         admin,
         totp_secret_enc,
@@ -96,7 +98,7 @@ async fn login(
     let session = auth::create_session(&mut tx, &admin.id).await?;
     tx.commit().await?;
 
-    let cookie = auth::session_cookie(&state.config, &session);
+    let cookie = auth::session_cookie(&state.config, &headers, &session);
     Ok((
         [(header::SET_COOKIE, cookie)],
         Json(json!({ "admin": admin })),
@@ -110,7 +112,7 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> AppResult<
             .execute(&state.pool)
             .await?;
     }
-    let cookie = auth::clear_session_cookie(&state.config);
+    let cookie = auth::clear_session_cookie(&state.config, &headers);
     Ok(([(header::SET_COOKIE, cookie)], StatusCode::NO_CONTENT))
 }
 

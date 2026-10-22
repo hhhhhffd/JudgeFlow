@@ -48,7 +48,7 @@ impl AppState {
             data_dir: data_dir.clone(),
             public_url: Some("http://localhost:8080".into()),
             secret_key: Some("test-secret-key".into()),
-            trust_proxy: false,
+            trust_proxy: crate::config::TrustProxy::None,
         };
         let pool = crate::db::connect(&data_dir).await.expect("test database");
         let crypto = Crypto::from_material(b"test-secret-key");

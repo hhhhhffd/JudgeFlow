@@ -37,18 +37,46 @@ pub struct Config {
     )]
     pub secret_key: Option<String>,
 
-    /// Trust `CF-Connecting-IP` / `X-Forwarded-For` for the client IP (rate limiting). Enable only
-    /// behind a reverse proxy or tunnel that sets them; otherwise clients could spoof their IP.
-    #[arg(long, global = true, env = "JUDGEFLOW_TRUST_PROXY")]
-    pub trust_proxy: bool,
+    /// Where the client IP (rate limiting) comes from: `none` (peer address), `cloudflare`
+    /// (`CF-Connecting-IP`) or `xff` (rightmost `X-Forwarded-For` entry). Use the proxy modes only
+    /// behind a proxy or tunnel that sets the header; otherwise clients could spoof their IP.
+    #[arg(
+        long,
+        global = true,
+        env = "JUDGEFLOW_TRUST_PROXY",
+        value_enum,
+        default_value = "none"
+    )]
+    pub trust_proxy: TrustProxy,
+}
+
+/// Which proxy header, if any, is trusted for the client IP and the original scheme.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrustProxy {
+    /// No proxy: the peer address is the client IP.
+    #[value(name = "none", alias = "false")]
+    None,
+    /// Cloudflare (Tunnel): `CF-Connecting-IP`.
+    Cloudflare,
+    /// Generic reverse proxy: the rightmost `X-Forwarded-For` entry.
+    Xff,
 }
 
 impl Config {
-    /// Cookies get the `Secure` attribute only when the public URL is https.
-    pub fn secure_cookies(&self) -> bool {
-        self.public_url
+    /// Cookies get the `Secure` attribute when the public URL is https, or when a trusted proxy
+    /// reports the request as https via `X-Forwarded-Proto`.
+    pub fn secure_cookies(&self, headers: &HeaderMap) -> bool {
+        let public_https = self
+            .public_url
             .as_deref()
-            .is_some_and(|url| url.starts_with("https"))
+            .is_some_and(|url| url.starts_with("https"));
+        let proxied_https = self.trust_proxy != TrustProxy::None
+            && headers
+                .get("x-forwarded-proto")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("https"));
+        public_https || proxied_https
     }
 
     /// Base URL for links: `PUBLIC_URL`, else built from the request `Host` and `X-Forwarded-Proto`.

@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use axum::extract::{Path, State};
-use axum::http::header;
+use axum::http::{HeaderMap, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -109,6 +109,7 @@ struct CompleteRequest {
 
 async fn complete(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(token): Path<String>,
     Json(req): Json<CompleteRequest>,
 ) -> AppResult<impl IntoResponse> {
@@ -162,7 +163,7 @@ async fn complete(
     .await?;
     tx.commit().await?;
 
-    let cookie = auth::session_cookie(&state.config, &session);
+    let cookie = auth::session_cookie(&state.config, &headers, &session);
     Ok((
         [(header::SET_COOKIE, cookie)],
         Json(json!({ "admin": admin })),

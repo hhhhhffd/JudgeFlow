@@ -76,7 +76,7 @@ make build                      # web/dist + cargo build --release
 | `JUDGEFLOW_DATA_DIR` | `./data` | SQLite, загрузки, `secret.key` |
 | `JUDGEFLOW_PUBLIC_URL` | из `Host` запроса | база для ссылок судей и QR |
 | `JUDGEFLOW_SECRET_KEY` | генерируется в `DATA_DIR/secret.key` | ключ шифрования TOTP-секретов |
-| `JUDGEFLOW_TRUST_PROXY` | `false` | брать IP клиента из `CF-Connecting-IP` / `X-Forwarded-For` (для лимита попыток входа); включайте только за прокси или туннелем; приложение должно быть недоступно напрямую (порт на `127.0.0.1` или не публиковать), иначе IP можно подделать |
+| `JUDGEFLOW_TRUST_PROXY` | `none` | откуда брать IP клиента (лимит попыток входа, лимиты SSE) и схему запроса: `none` (или `false`) — адрес соединения; `cloudflare` — только `CF-Connecting-IP`; `xff` — только последняя запись `X-Forwarded-For`. Любое другое значение (в т. ч. старое `true`) — ошибка при запуске. Режимы прокси включайте только за прокси или туннелем; приложение должно быть недоступно напрямую (порт на `127.0.0.1` или не публиковать), иначе IP можно подделать. В этих режимах `X-Forwarded-Proto: https` включает `Secure` у cookie сессии |
 | `RUST_LOG` | `info` | уровень логов |
 
 Резервное копирование — см. «Администрирование» ниже.
@@ -85,7 +85,7 @@ make build                      # web/dist + cargo build --release
 
 - **VPS** (хватает 1 vCPU / 512 МБ): Docker или бинарник + systemd, HTTPS через любой reverse proxy.
 - **Домашний ПК + Cloudflare Tunnel**: бесплатный HTTPS, пример сервиса `cloudflared` закомментирован в `compose.yaml`.
-  Задайте `JUDGEFLOW_TRUST_PROXY=true`, иначе все клиенты за туннелем делят один лимит попыток входа.
+  Задайте `JUDGEFLOW_TRUST_PROXY=cloudflare`, иначе все клиенты за туннелем делят один лимит попыток входа.
   При этом публикуйте порт только на loopback (`127.0.0.1:8080:8080` в `compose.yaml`): при прямом доступе к порту заголовки подделываются.
 - **Event in a Box** — ноутбук в локальной Wi-Fi без интернета: укажите `JUDGEFLOW_PUBLIC_URL=http://<LAN-IP>:8080`.
   Без HTTPS Service Worker недоступен, но оценки всё равно сохраняются на устройстве судьи в IndexedDB.
