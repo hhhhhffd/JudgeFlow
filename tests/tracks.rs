@@ -1130,3 +1130,39 @@ async fn auto_assign_with_no_eligible_judges_is_a_conflict_even_when_short_is_al
     assert_eq!(full["event"]["assignments_enabled"], true);
     assert_eq!(full["assignments"].as_array().unwrap().len(), 3);
 }
+
+#[tokio::test]
+async fn start_requires_a_criterion_for_every_team() {
+    let t = tracked(1, false).await;
+    // Drop the only track-less criterion's scope: the Мобайл team now has no criterion at all.
+    let resp =
+        t.fx.admin(
+            Method::PATCH,
+            &format!("/criteria/{}", t.fx.criterion_ids[0]),
+            Some(json!({ "track_id": t.tracks[0] })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    let resp =
+        t.fx.admin(
+            Method::PATCH,
+            &format!("/criteria/{}", t.fx.criterion_ids[1]),
+            Some(json!({ "track_id": t.tracks[0] })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    let blocked = t.fx.transition(json!({ "to": "judging" })).await;
+    assert_eq!(blocked.status, StatusCode::CONFLICT, "{:?}", blocked.body);
+    assert_eq!(blocked.body["details"]["missing"], json!(["team_criteria"]));
+
+    let resp =
+        t.fx.admin(
+            Method::PATCH,
+            &format!("/criteria/{}", t.fx.criterion_ids[1]),
+            Some(json!({ "track_id": t.tracks[1] })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+    let started = t.fx.transition(json!({ "to": "judging" })).await;
+    assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
+}

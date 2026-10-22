@@ -94,7 +94,7 @@ SHA-256 hex. TOTP secrets are encrypted (ChaCha20-Poly1305, key = SHA-256 of the
 
 | From → To | Rule |
 |---|---|
-| draft → judging | ≥1 team, ≥1 criterion, ≥1 active judge |
+| draft → judging | ≥1 team, ≥1 criterion, ≥1 active judge; in rubric modes every team has ≥1 applicable criterion (`details.missing` includes `team_criteria` otherwise) |
 | judging → locked | sets `locked_at` |
 | locked → judging | `reason` required |
 | locked → finalized | all active judges submitted, or `force: true` + `reason`; stores a `result_snapshots` row (official ranking) |
@@ -126,7 +126,7 @@ Input: teams (ordered), criteria (`max_x100`, `weight`), judges (`is_active`, `s
   Teams equal on (meets_quorum, exact score, sheets) share a rank and get `tie = true`
   (standard competition ranking 1,1,3). Teams without a score get `rank = None`, ordered by team order.
   Ties are resolved by the organizer manually — the engine never breaks them silently.
-- Output values are rounded half-up to hundredths only at the end (`score_x100`, `avg_x100`).
+- Output values are rounded half away from zero (centered scores may be negative) to hundredths only at the end (`score_x100`, `avg_x100`).
 - Comparison uses the exact values, not the rounded ones.
 
 ```rust

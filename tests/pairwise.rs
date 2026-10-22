@@ -1000,3 +1000,77 @@ async fn submit_drops_open_pairs_that_are_no_longer_covered() {
     let resp = fx.judge(0, Method::POST, "/judge/submit", None).await;
     assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
 }
+
+async fn put_conflicts(fx: &Fixture, pairs: &[(usize, usize)]) {
+    let pairs: Vec<Value> = pairs
+        .iter()
+        .map(|(j, t)| json!({ "judge_id": fx.judges[*j].0, "team_id": fx.team_ids[*t] }))
+        .collect();
+    let resp = fx
+        .admin(
+            Method::PUT,
+            &format!("/events/{}/conflicts", fx.event_id),
+            Some(json!({ "pairs": pairs })),
+        )
+        .await;
+    assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.body);
+}
+
+#[tokio::test]
+async fn stale_open_pairs_are_deleted_and_hidden_after_a_conflict() {
+    let fx = pairwise(1, &["Вега", "Дельта"], true).await;
+    let first = comparisons(&reserve(&fx, 0, 3).await);
+    assert_eq!(first.len(), 3);
+    put_conflicts(&fx, &[(0, 3)]).await;
+
+    // The session never shows pairs with a team the judge no longer covers.
+    let session = fx.judge(0, Method::GET, "/judge/session", None).await;
+    assert_eq!(session.status, StatusCode::OK);
+    let shown = session.body["comparisons"].as_array().unwrap();
+    let covered =
+        |c: &Value| c["team_a"] != json!(fx.team_ids[3]) && c["team_b"] != json!(fx.team_ids[3]);
+    assert!(shown.len() < 3 && shown.iter().all(covered));
+    let stale: Vec<&Value> = first.iter().filter(|c| !covered(c)).collect();
+    assert!(!stale.is_empty());
+
+    // Writes to a stale pair are rejected.
+    let resp = put_comparisons(
+        &fx,
+        0,
+        json!([{ "id": stale[0]["id"], "winner": "a", "edited_at": now_ms() }]),
+    )
+    .await;
+    assert_eq!(resp.body["results"][0]["status"], "rejected");
+    assert_eq!(resp.body["results"][0]["error"], "not_assigned");
+
+    // Reserving with an already satisfied count still persists the cleanup.
+    let open = comparisons(&reserve(&fx, 0, 1).await);
+    assert!(open.iter().all(covered));
+    let again = comparisons(&reserve(&fx, 0, 1).await);
+    assert_eq!(comparison_ids(&open), comparison_ids(&again));
+    let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comparisons WHERE id = ?")
+        .bind(stale[0]["id"].as_str().unwrap())
+        .fetch_one(&fx.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
+}
+
+#[tokio::test]
+async fn matrix_ignores_comparisons_against_uncovered_teams() {
+    let fx = pairwise(1, &[], true).await;
+    let open = comparisons(&reserve(&fx, 0, 1).await);
+    decide_by_order(&fx, 0, &open).await;
+    put_conflicts(&fx, &[(0, 0)]).await;
+    let matrix = fx
+        .admin(
+            Method::GET,
+            &format!("/events/{}/matrix", fx.event_id),
+            None,
+        )
+        .await;
+    assert_eq!(matrix.status, StatusCode::OK);
+    for cell in matrix.body["cells"].as_array().unwrap() {
+        assert_eq!(cell["scored"], 0, "{cell}");
+    }
+}

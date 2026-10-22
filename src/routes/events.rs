@@ -529,6 +529,21 @@ async fn transition(
             if rubric && counts.1 == 0 {
                 missing.push("criteria");
             }
+            if rubric && counts.0 > 0 && counts.1 > 0 {
+                // Every team needs at least one criterion (track-less or of its own track),
+                // otherwise its sheet would be vacuously complete.
+                let uncovered: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM teams t WHERE t.event_id = ?1 AND NOT EXISTS ( \
+                     SELECT 1 FROM criteria c WHERE c.event_id = ?1 \
+                     AND (c.track_id IS NULL OR c.track_id IS t.track_id))",
+                )
+                .bind(&id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if uncovered > 0 {
+                    missing.push("team_criteria");
+                }
+            }
             if counts.2 == 0 {
                 missing.push("judges");
             }
