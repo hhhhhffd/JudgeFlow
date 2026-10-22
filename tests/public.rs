@@ -323,11 +323,13 @@ async fn security_headers_cover_api_and_static_responses() {
         let resp = common::send(&app, Method::GET, uri, None, common::Auth::None).await;
         let h = &resp.headers;
         assert_eq!(h["x-content-type-options"], "nosniff", "{uri}");
-        assert_eq!(h["x-frame-options"], "DENY", "{uri}");
+        assert_eq!(h["x-frame-options"], "SAMEORIGIN", "{uri}");
         assert_eq!(h["referrer-policy"], "no-referrer", "{uri}");
         let csp = h["content-security-policy"].to_str().unwrap();
         assert!(
-            csp.contains("frame-ancestors 'none'") && csp.contains("script-src 'self'"),
+            csp.contains("frame-ancestors 'self'")
+                && csp.contains("font-src 'self' data:")
+                && csp.contains("script-src 'self'"),
             "{uri}: {csp}"
         );
     }
@@ -348,7 +350,7 @@ async fn public_stream_is_capped_per_client_and_slot_is_released_on_drop() {
     let open = || tower::ServiceExt::oneshot(fx.app.clone(), stream_request(&uri, None));
     // Responses are kept alive: dropping one closes its stream and frees the slot.
     let mut open_streams = Vec::new();
-    for _ in 0..20 {
+    for _ in 0..500 {
         let resp = open().await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         open_streams.push(resp);

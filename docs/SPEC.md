@@ -52,7 +52,7 @@ Source of truth for the rewrite. The previous implementation lives on the `v1` b
 - Errors: HTTP status + JSON `{ "error": "<code>", "message": "<human text, Russian>", "details"?: any }`.
   Common codes: `unauthorized`, `forbidden`, `not_found`, `validation`, `conflict`, `invalid_state`,
   `rate_limited`.
-- Every response (API, static files, SPA) carries `Content-Security-Policy` (self-only; `img-src` also `data:`/`blob:`, `style-src` also `unsafe-inline`; `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+- Every response (API, static files, SPA) carries `Content-Security-Policy` (self-only; `img-src` also `data:`/`blob:`, `font-src` also `data:`, `style-src` also `unsafe-inline`; `frame-ancestors 'self'` for the same-origin stage preview), `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
 - Mutating admin endpoints require the session cookie (SameSite=Strict, HttpOnly, `Secure` when
   `PUBLIC_URL` is https). Judge endpoints use `Authorization: Bearer <judge token>`.
 - Every mutating admin action on an event writes to `audit_log`.
@@ -198,7 +198,7 @@ ends otherwise. Request logs redact token path segments (`/j/***`, `/invite/***`
 - Criteria: same shape (`/criteria`, `/criteria/bulk`, `/criteria/:id`, `/criteria/order`) with `{name, description?, max_x100, step_x100, weight}`.
 - Judges: `POST /api/events/:id/judges` `{names: [string]}` → `[{judge, link}]` — the link (with the raw token) is returned **only here and on rotate**. `PATCH /api/judges/:id` `{name?, is_active?}`; `DELETE /api/judges/:id`; `POST /api/judges/:id/rotate` → `{judge, link}`; `POST /api/judges/:id/reopen` `{reason}` (clears `submitted_at`).
   Judge link format: `<base>/j/<token>`.
-- `PUT /api/events/:id/background` (raw body, `Content-Type: image/png|jpeg|webp`, ≤ 5 MB) → `EventFull`; `DELETE /api/events/:id/background`. Public: `GET /api/public/events/:id/background` (404 for draft events).
+- `PUT /api/events/:id/background` (raw body, `Content-Type: image/png|jpeg|webp`, ≤ 5 MB) → `EventFull`; `DELETE /api/events/:id/background`; `GET /api/events/:id/background` serves the image to admins (also in draft; admin responses carry this URL as `background_url`). Public: `GET /api/public/events/:id/background` (404 for draft events).
 - `GET /api/events/:id/matrix` → `{judges: [...as above], teams: [{id,name}], cells: [{judge_id, team_id, scored, total}]}`.
 - `GET /api/events/:id/results?mode=provisional|official` → `Ranking` (+ `snapshot` if finalized/published).
 - `GET /api/events/:id/export.csv` — ranking (official when finalized/published, else provisional) with per-criterion averages and per-judge scores. UTF-8 with BOM, `;` separator.

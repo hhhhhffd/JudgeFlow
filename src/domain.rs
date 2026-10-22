@@ -65,10 +65,17 @@ impl Event {
         })
     }
 
+    /// Admin-authenticated background URL; works for draft events, unlike the public one.
+    pub fn admin_background_url(&self) -> Option<String> {
+        self.background_file
+            .as_ref()
+            .map(|_| format!("/api/events/{}/background?v={}", self.id, self.updated_at))
+    }
+
     /// Flat admin representation (`event` of `EventFull`).
     pub fn admin_json(&self) -> Value {
         let mut value = serde_json::to_value(self).expect("event serializes");
-        value["background_url"] = json!(self.background_url());
+        value["background_url"] = json!(self.admin_background_url());
         value
     }
 

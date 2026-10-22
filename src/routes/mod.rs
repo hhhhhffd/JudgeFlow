@@ -38,10 +38,10 @@ pub fn router(state: AppState) -> Router {
 }
 
 /// The app is fully self-hosted (fonts and scripts are bundled; QR codes and the offline cache use
-/// `data:`/`blob:` images only), so everything is restricted to the own origin.
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data: blob:; \
+/// `data:`/`blob:` images only), so everything is restricted to the own origin (same-origin framing is allowed for the control-room stage preview).
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; \
     style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; \
-    manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+    manifest-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'";
 
 /// Adds the same hardening headers to every response: API, static files and the SPA fallback.
 async fn security_headers(mut response: Response) -> Response {
@@ -58,7 +58,10 @@ async fn security_headers(mut response: Response) -> Response {
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("SAMEORIGIN"),
+    );
     response
 }
 

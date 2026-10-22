@@ -22,6 +22,7 @@ async fn admin_routes_require_a_session() {
         (Method::POST, format!("/api/events/{id}/criteria")),
         (Method::POST, format!("/api/events/{id}/judges")),
         (Method::PUT, format!("/api/events/{id}/background")),
+        (Method::GET, format!("/api/events/{id}/background")),
         (Method::GET, format!("/api/events/{id}/matrix")),
         (Method::GET, format!("/api/events/{id}/results")),
         (Method::GET, format!("/api/events/{id}/export.csv")),
@@ -575,11 +576,16 @@ async fn background_upload_checks_magic_bytes_and_replaces_old_file() {
         ok.body["event"]["background_url"]
             .as_str()
             .unwrap()
-            .starts_with(&public)
+            .starts_with(&path)
     );
-    // Drafts are not public, backgrounds included.
+    // Drafts are not public, but the organizer can still preview the background.
     let draft = send(&fx.app, Method::GET, &public, None, Auth::None).await;
     assert_eq!(draft.status, StatusCode::NOT_FOUND);
+    let anon = send(&fx.app, Method::GET, &path, None, Auth::None).await;
+    assert_eq!(anon.status, StatusCode::UNAUTHORIZED);
+    let preview = send(&fx.app, Method::GET, &path, None, cookie).await;
+    assert_eq!(preview.status, StatusCode::OK);
+    assert_eq!(preview.bytes, PNG);
     let started = fx.transition(json!({ "to": "judging" })).await;
     assert_eq!(started.status, StatusCode::OK, "{:?}", started.body);
     let served = send(&fx.app, Method::GET, &public, None, Auth::None).await;

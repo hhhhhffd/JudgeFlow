@@ -43,7 +43,8 @@ pub fn router() -> Router<AppState> {
         .route("/events/{id}/stage/reveal", post(stage_reveal))
         .route(
             "/events/{id}/background",
-            put(put_background)
+            get(get_background)
+                .put(put_background)
                 .delete(delete_background)
                 .layer(DefaultBodyLimit::max(BACKGROUND_MAX_BYTES)),
         )
@@ -710,6 +711,17 @@ async fn remove_upload(state: &AppState, file: &str) {
     {
         tracing::warn!(%err, file, "failed to remove upload");
     }
+}
+
+async fn get_background(
+    State(state): State<AppState>,
+    _session: AdminSession,
+    Path(id): Path<String>,
+) -> AppResult<impl IntoResponse> {
+    let mut conn = state.pool.acquire().await?;
+    let event = load_event(&mut conn, &id).await?;
+    drop(conn);
+    super::public::serve_background(&state, event).await
 }
 
 async fn put_background(

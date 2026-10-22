@@ -206,7 +206,7 @@ const PUBLIC_KINDS: &[ChangeKind] = &[
 ];
 
 /// Concurrent public streams per client IP, and across all clients.
-const PUBLIC_STREAMS_PER_IP: usize = 20;
+const PUBLIC_STREAMS_PER_IP: usize = 500;
 const PUBLIC_STREAMS_TOTAL: usize = 5000;
 
 async fn stream(
@@ -236,6 +236,14 @@ async fn background(
     let mut conn = state.pool.acquire().await?;
     let event = load_public(&mut conn, &id).await?;
     drop(conn);
+    serve_background(&state, event).await
+}
+
+/// Reads the event's background image; shared by the public and the admin endpoints.
+pub async fn serve_background(
+    state: &AppState,
+    event: Event,
+) -> AppResult<impl IntoResponse + use<>> {
     let file = event.background_file.ok_or(AppError::NotFound)?;
     let content_type = match file.rsplit('.').next() {
         Some("png") => "image/png",
@@ -243,7 +251,7 @@ async fn background(
         Some("webp") => "image/webp",
         _ => return Err(AppError::NotFound),
     };
-    let bytes = tokio::fs::read(upload_path(&state, &file))
+    let bytes = tokio::fs::read(upload_path(state, &file))
         .await
         .map_err(|err| match err.kind() {
             std::io::ErrorKind::NotFound => AppError::NotFound,
