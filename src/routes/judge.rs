@@ -124,7 +124,8 @@ async fn session(State(state): State<AppState>, auth: JudgeAuth) -> AppResult<Js
         "scores": scores,
     });
     if event.scoring_mode == "pairwise" {
-        payload["comparisons"] = json!(load_comparisons(&mut conn, &auth.judge_id, false).await?);
+        payload["comparisons"] =
+            json!(load_comparisons(&mut conn, &layout, &auth.judge_id, false).await?);
     }
     Ok(Json(payload))
 }
@@ -139,9 +140,11 @@ struct ComparisonRow {
 }
 
 /// The judge's comparisons as `{id, team_a, team_b, winner, edited_at}`, oldest first;
-/// `open_only` keeps just the undecided ones.
+/// `open_only` keeps just the undecided ones. Pairs the judge no longer covers (conflicts,
+/// assignments, track changes) are never shown.
 async fn load_comparisons(
     conn: &mut SqliteConnection,
+    layout: &Layout,
     judge_id: &str,
     open_only: bool,
 ) -> AppResult<Vec<Value>> {
@@ -153,7 +156,18 @@ async fn load_comparisons(
     .bind(open_only)
     .fetch_all(conn)
     .await?;
-    Ok(rows.iter().map(|row| json!(row)).collect())
+    Ok(rows
+        .iter()
+        .filter(|row| pair_is_covered(layout, judge_id, &row.team_a, &row.team_b))
+        .map(|row| json!(row))
+        .collect())
+}
+
+/// Whether the judge may compare these two teams: covers both and they share a track group.
+fn pair_is_covered(layout: &Layout, judge_id: &str, team_a: &str, team_b: &str) -> bool {
+    layout.judge_covers(judge_id, team_a)
+        && layout.judge_covers(judge_id, team_b)
+        && layout.same_group(team_a, team_b)
 }
 
 #[derive(Deserialize)]
@@ -228,10 +242,7 @@ async fn delete_stale_open_pairs(
     .fetch_all(&mut *tx)
     .await?;
     for (id, a, b) in open {
-        if layout.judge_covers(judge_id, &a)
-            && layout.judge_covers(judge_id, &b)
-            && layout.same_group(&a, &b)
-        {
+        if pair_is_covered(layout, judge_id, &a, &b) {
             continue;
         }
         sqlx::query("DELETE FROM comparisons WHERE id = ?")
@@ -411,9 +422,11 @@ async fn reserve_pairs(
     }
     let layout = Layout::load(&mut tx, &event.id).await?;
     delete_stale_open_pairs(&mut tx, &layout, &auth.judge_id).await?;
-    let open = load_comparisons(&mut tx, &auth.judge_id, true).await?;
+    let open = load_comparisons(&mut tx, &layout, &auth.judge_id, true).await?;
     let want = req.count as usize;
     if event.status != "judging" || submitted_at.is_some() || open.len() >= want {
+        // Persist the stale-pair cleanup; dropping the transaction would roll it back.
+        tx.commit().await?;
         return Ok(Json(json!({ "comparisons": open })));
     }
 
@@ -454,7 +467,7 @@ async fn reserve_pairs(
         .execute(&mut *tx)
         .await?;
     }
-    let open = load_comparisons(&mut tx, &auth.judge_id, true).await?;
+    let open = load_comparisons(&mut tx, &layout, &auth.judge_id, true).await?;
     tx.commit().await?;
     Ok(Json(json!({ "comparisons": open })))
 }
@@ -484,6 +497,7 @@ async fn apply_comparison_items(
     items: &[ComparisonItem],
 ) -> AppResult<(Vec<Value>, bool)> {
     let now = now_ms();
+    let layout = Layout::load(&mut *tx, &event.id).await?;
     let mut results = Vec::with_capacity(items.len());
     let mut applied = false;
     for item in items {
@@ -502,17 +516,21 @@ async fn apply_comparison_items(
             results.push(comparison_rejection(item, "invalid_state"));
             continue;
         }
-        let existing: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
-            "SELECT winner, edited_at FROM comparisons WHERE id = ? AND judge_id = ?",
+        let existing: Option<(Option<String>, Option<i64>, String, String)> = sqlx::query_as(
+            "SELECT winner, edited_at, team_a, team_b FROM comparisons WHERE id = ? AND judge_id = ?",
         )
         .bind(&item.id)
         .bind(judge_id)
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((server_winner, server_edited_at)) = existing else {
+        let Some((server_winner, server_edited_at, team_a, team_b)) = existing else {
             results.push(comparison_rejection(item, "not_found"));
             continue;
         };
+        if !pair_is_covered(&layout, judge_id, &team_a, &team_b) {
+            results.push(comparison_rejection(item, "not_assigned"));
+            continue;
+        }
         let invalid_winner = item
             .winner
             .as_deref()
