@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use axum::Router;
 use axum::extract::Request;
+use axum::http::{HeaderValue, header};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 
@@ -32,7 +33,33 @@ pub fn router(state: AppState) -> Router {
         .nest("/api", api())
         .fallback(static_files::handler)
         .layer(middleware::from_fn(log_requests))
+        .layer(middleware::map_response(security_headers))
         .with_state(state)
+}
+
+/// The app is fully self-hosted (fonts and scripts are bundled; QR codes and the offline cache use
+/// `data:`/`blob:` images only), so everything is restricted to the own origin.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data: blob:; \
+    style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; \
+    manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+
+/// Adds the same hardening headers to every response: API, static files and the SPA fallback.
+async fn security_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    response
 }
 
 /// All API routes. New feature modules (events, judge, public, ...) are added with `.merge(...)`.

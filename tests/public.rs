@@ -315,3 +315,20 @@ async fn public_results_cache_is_invalidated_by_changes() {
     set_visibility(&fx, "hidden").await;
     assert!(public(&fx).await.body["results"].is_null());
 }
+
+#[tokio::test]
+async fn security_headers_cover_api_and_static_responses() {
+    let (_state, app) = common::setup().await;
+    for uri in ["/api/auth/me", "/api/nope", "/", "/some/spa/route"] {
+        let resp = common::send(&app, Method::GET, uri, None, common::Auth::None).await;
+        let h = &resp.headers;
+        assert_eq!(h["x-content-type-options"], "nosniff", "{uri}");
+        assert_eq!(h["x-frame-options"], "DENY", "{uri}");
+        assert_eq!(h["referrer-policy"], "no-referrer", "{uri}");
+        let csp = h["content-security-policy"].to_str().unwrap();
+        assert!(
+            csp.contains("frame-ancestors 'none'") && csp.contains("script-src 'self'"),
+            "{uri}: {csp}"
+        );
+    }
+}
