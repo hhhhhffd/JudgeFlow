@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cr } from '@/i18n/control-room'
+import { ru } from '@/i18n/ru'
 import { errorText } from '@/lib/errors'
 import { ConfirmDialog } from './confirm-dialog'
 import { useFull } from './context'
@@ -33,7 +34,7 @@ export function EventHeader() {
       </Link>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight break-words">{event.title}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">{event.title}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <StatusBadge status={event.status} />
             {(event.round > 1 || children.length > 0) && <Badge variant="outline">{cr.header.round(event.round)}</Badge>}
@@ -103,7 +104,7 @@ function TransitionDialog({ action, onClose }: { action: LifecycleAction; onClos
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['cr', event.id] })
       void qc.invalidateQueries({ queryKey: ['events'] })
-      toast.success(cr.lifecycle.done)
+      toast.success(cr.lifecycle.done(ru.status[action.to]))
       onClose()
     },
   })
@@ -111,17 +112,23 @@ function TransitionDialog({ action, onClose }: { action: LifecycleAction; onClos
   const conflict = transition.error instanceof ApiError && transition.error.status === 409 && action.key === 'finalize' ? transition.error : null
   const names = ((conflict?.details as UnsubmittedDetails | undefined)?.unsubmitted ?? []).map((j) => j.name)
   const needsReason = action.reasonRequired || conflict !== null
+  // draft -> judging reports what the event still lacks; unknown codes are skipped rather than shown raw.
+  const lacking =
+    transition.error instanceof ApiError && transition.error.status === 409 && action.key === 'start'
+      ? ((transition.error.details as { missing?: string[] } | undefined)?.missing ?? []).flatMap((m) => (m in cr.lifecycle.missing ? [cr.lifecycle.missing[m as keyof typeof cr.lifecycle.missing]] : []))
+      : []
 
   return (
     <ConfirmDialog
       open
       onOpenChange={(o) => !o && onClose()}
-      title={cr.lifecycle.actions[action.key]}
-      description={cr.lifecycle.descriptions[action.key]}
+      title={conflict ? cr.lifecycle.unsubmittedTitle : cr.lifecycle.actions[action.key]}
+      description={conflict ? (conflict.message || cr.lifecycle.unsubmittedText) : cr.lifecycle.descriptions[action.key]}
       confirmLabel={conflict ? cr.lifecycle.force : cr.lifecycle.actions[action.key]}
       destructive={Boolean(conflict)}
       pending={transition.isPending}
       error={conflict ? null : transition.isError ? errorText(transition.error) : null}
+      errorList={lacking}
       reasonLabel={needsReason ? (conflict ? cr.lifecycle.forceReason : cr.lifecycle.reasonLabel) : undefined}
       onConfirm={(reason) => {
         // Escalate to force only after the server has reported unsubmitted judges.
@@ -130,16 +137,14 @@ function TransitionDialog({ action, onClose }: { action: LifecycleAction; onClos
     >
       {conflict && (
         <div role="alert" className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm">
-          <p className="font-medium">{cr.lifecycle.unsubmittedTitle}</p>
-          <p className="mt-1 text-muted-foreground">{conflict.message || cr.lifecycle.unsubmittedText}</p>
           {names.length > 0 ? (
-            <ul className="mt-2 list-disc pl-5">
+            <ul className="list-disc pl-5">
               {names.map((n) => (
                 <li key={n}>{n}</li>
               ))}
             </ul>
           ) : (
-            <p className="mt-1">{cr.lifecycle.unsubmittedUnknown}</p>
+            <p>{cr.lifecycle.unsubmittedUnknown}</p>
           )}
         </div>
       )}

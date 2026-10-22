@@ -54,7 +54,7 @@ function NextRoundForm({ rows, tracks, onClose }: { rows: RankingRow[]; tracks: 
   const [title, setTitle] = useState(cr.nextRound.defaultTitle(event.title, event.round + 1))
   const [top, setTop] = useState('3')
   const [picked, setPicked] = useState<Set<string>>(() => new Set(topTeamIds(rows, 3)))
-  const [mode, setMode] = useState<ScoringMode>('team')
+  const [mode, setMode] = useState<ScoringMode>(event.scoring_mode)
   const [copyCriteria, setCopyCriteria] = useState(true)
   const [copyJudges, setCopyJudges] = useState(true)
   const topNum = Number(top)
@@ -133,7 +133,7 @@ function NextRoundForm({ rows, tracks, onClose }: { rows: RankingRow[]; tracks: 
                         <label className="flex min-h-9 cursor-pointer items-center gap-3 rounded-md px-2 hover:bg-accent/50 has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/50">
                           <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={picked.has(t.id)} onChange={() => toggle(t.id)} />
                           <span className="num w-14 shrink-0 font-mono text-sm text-muted-foreground">{rank ?? cr.nextRound.noRank}</span>
-                          <span className="min-w-0 truncate" title={t.name}>
+                          <span className="min-w-0 [overflow-wrap:anywhere]" title={t.name}>
                             {t.name}
                           </span>
                         </label>

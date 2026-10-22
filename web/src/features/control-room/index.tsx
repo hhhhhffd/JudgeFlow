@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { ApiError } from '@/api/client'
@@ -53,6 +53,44 @@ function useLiveInvalidation(id: string) {
   }, [id, qc])
 }
 
+/** Tab strip that scrolls sideways on narrow screens; an edge fade hints at clipped tabs. */
+function TabStrip({ id }: { id: string }) {
+  const [more, setMore] = useState(false)
+  const check = (el: HTMLElement | null) => {
+    if (el) setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 4)
+  }
+  return (
+    <div className="relative -mx-4 mb-6">
+      <nav
+        ref={check}
+        onScroll={(e) => check(e.currentTarget)}
+        aria-label={cr.nav.label}
+        className="overflow-x-auto overflow-y-hidden border-b px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        <ul className="flex w-max min-w-full gap-1">
+          {TABS.map((t) => (
+            <li key={t.to}>
+              <NavLink
+                to={t.to ? `/events/${id}/${t.to}` : `/events/${id}`}
+                end={t.end}
+                className={({ isActive }) =>
+                  cn(
+                    '-mb-px inline-flex h-11 items-center border-b-2 border-transparent px-3 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                    isActive && 'border-primary text-foreground',
+                  )
+                }
+              >
+                {t.label}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      {more && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background to-transparent" />}
+    </div>
+  )
+}
+
 function EventLayout() {
   const { id = '' } = useParams()
   useLiveInvalidation(id)
@@ -84,26 +122,7 @@ function EventLayout() {
     <EventContext.Provider value={query.data}>
       <PageContainer>
         <EventHeader />
-        <nav aria-label={cr.nav.label} className="-mx-4 mb-6 overflow-x-auto overflow-y-hidden border-b px-4">
-          <ul className="flex w-max min-w-full gap-1">
-            {TABS.map((t) => (
-              <li key={t.to}>
-                <NavLink
-                  to={t.to ? `/events/${id}/${t.to}` : `/events/${id}`}
-                  end={t.end}
-                  className={({ isActive }) =>
-                    cn(
-                      '-mb-px inline-flex h-11 items-center border-b-2 border-transparent px-3 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                      isActive && 'border-primary text-foreground',
-                    )
-                  }
-                >
-                  {t.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
+        <TabStrip id={id} />
         <Routes>
           <Route index element={<Overview />} />
           <Route path="setup" element={<Setup />} />

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { authApi } from '@/api/endpoints'
 import { AuthShell } from '@/components/auth-shell'
@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label'
 import { meQueryKey } from '@/features/auth/auth'
 import { ru } from '@/i18n/ru'
 import { errorText } from '@/lib/errors'
+import { useFirstStartAvailable } from './first-start-available'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -19,6 +20,7 @@ export default function LoginPage() {
   const qc = useQueryClient()
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
+  const firstStart = useFirstStartAvailable()
 
   const login = useMutation({
     mutationFn: authApi.login,
@@ -43,7 +45,20 @@ export default function LoginPage() {
     : null
 
   return (
-    <AuthShell title={ru.login.title} subtitle={ru.login.subtitle} footer={ru.login.judgeHint}>
+    <AuthShell title={ru.login.title} subtitle={ru.login.subtitle} footer={
+        <div className="space-y-2">
+          {firstStart.data === true && (
+            <p>
+              {ru.login.firstStartHint}{' '}
+              <Link to="/firststart" className="font-medium text-foreground underline underline-offset-4">
+                {ru.login.firstStartLink}
+              </Link>
+            </p>
+          )}
+          <p>{ru.login.judgeHint}</p>
+        </div>
+      }
+    >
       <form
         className="space-y-5"
         onSubmit={(e) => {

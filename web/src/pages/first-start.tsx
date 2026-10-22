@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { meQueryKey } from '@/features/auth/auth'
 import { ru } from '@/i18n/ru'
 import { errorText } from '@/lib/errors'
+import { useFirstStartAvailable } from './first-start-available'
 import { NotFoundView } from './not-found'
 
 export default function FirstStartPage() {
@@ -22,19 +23,7 @@ export default function FirstStartPage() {
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
 
-  const available = useQuery({
-    queryKey: ['first-start'],
-    queryFn: async () => {
-      try {
-        await setupApi.checkFirstStart()
-        return true
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 404) return false
-        throw e
-      }
-    },
-    retry: false,
-  })
+  const available = useFirstStartAvailable()
 
   const begin = useMutation({ mutationFn: setupApi.begin })
   const complete = useMutation({

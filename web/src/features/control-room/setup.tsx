@@ -72,6 +72,14 @@ function Field({ label, htmlFor, hint, children }: { label: string; htmlFor: str
   )
 }
 
+function DirtyNote() {
+  return (
+    <span role="status" className="text-sm text-warning">
+      {cr.setup.unsaved}
+    </span>
+  )
+}
+
 function toLocalInput(ms: number | null): string {
   if (ms == null) return ''
   const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000)
@@ -85,6 +93,8 @@ function BasicsCard() {
   const [startsAt, setStartsAt] = useState(toLocalInput(event.starts_at))
   const [location, setLocation] = useState(event.location ?? '')
   const save = useEventMutation((body: UpdateEventRequest) => eventsApi.update(event.id, body), cr.setup.saved)
+  const dirty =
+    title !== event.title || description !== event.description || startsAt !== toLocalInput(event.starts_at) || location !== (event.location ?? '')
 
   return (
     <Card title={cr.setup.basics}>
@@ -108,16 +118,17 @@ function BasicsCard() {
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={cr.setup.startsAtLabel} htmlFor="b-start">
-            <Input id="b-start" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+            <Input id="b-start" type="datetime-local" lang="ru" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
           </Field>
           <Field label={cr.setup.locationLabel} htmlFor="b-loc">
             <Input id="b-loc" maxLength={200} value={location} onChange={(e) => setLocation(e.target.value)} />
           </Field>
         </div>
-        <div>
+        <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={!title.trim() || save.isPending}>
             {ru.common.save}
           </Button>
+          {dirty && <DirtyNote />}
         </div>
       </form>
     </Card>
@@ -140,6 +151,15 @@ function RulesCard() {
   const valid = Number.isInteger(quorumNum) && quorumNum >= 1
   const pairwise = mode === 'pairwise'
   const normalizationFrozen = event.status === 'finalized' || event.status === 'published'
+  const dirty =
+    mode !== event.scoring_mode ||
+    normalize !== (event.normalization === 'center') ||
+    notes !== event.notes_enabled ||
+    quorum !== String(event.quorum) ||
+    teamsLabel !== (event.teams_label ?? '') ||
+    teamsOn !== event.teams_label_enabled ||
+    critLabel !== (event.criteria_label ?? '') ||
+    critOn !== event.criteria_label_enabled
 
   return (
     <Card title={cr.setup.rules}>
@@ -217,10 +237,11 @@ function RulesCard() {
           <LabelRow id="teams" toggle={cr.setup.teamsLabelToggle} label={cr.setup.teamsLabel} on={teamsOn} setOn={setTeamsOn} value={teamsLabel} setValue={setTeamsLabel} placeholder="Команды" />
           {!pairwise && <LabelRow id="crit" toggle={cr.setup.criteriaLabelToggle} label={cr.setup.criteriaLabel} on={critOn} setOn={setCritOn} value={critLabel} setValue={setCritLabel} placeholder="Критерии" />}
         </div>
-        <div>
+        <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={!valid || save.isPending}>
             {ru.common.save}
           </Button>
+          {dirty && <DirtyNote />}
         </div>
       </form>
     </Card>
@@ -297,7 +318,7 @@ function TracksCard() {
           {tracks.map((t, i) => (
             <li key={t.id} className="flex items-center gap-3 py-1.5 pr-1.5 pl-3">
               <span className="num w-6 shrink-0 font-mono text-xs text-muted-foreground">{i + 1}</span>
-              <p className="min-w-0 flex-1 truncate text-sm font-medium">{t.name}</p>
+              <p className="min-w-0 flex-1 text-sm font-medium [overflow-wrap:anywhere] sm:truncate" title={t.name}>{t.name}</p>
               <RowButtons
                 index={i}
                 count={tracks.length}
@@ -414,9 +435,9 @@ function TeamsCard() {
             <li key={t.id} className="flex items-center gap-3 py-1.5 pr-1.5 pl-3">
               <span className="num w-6 shrink-0 font-mono text-xs text-muted-foreground">{i + 1}</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{t.name}</p>
-                {t.description && <p className="truncate text-xs text-muted-foreground">{t.description}</p>}
-                {t.track_id && <p className="truncate text-xs text-muted-foreground">{cr.setup.trackLabel}: {tracks.find((x) => x.id === t.track_id)?.name ?? '—'}</p>}
+                <p className="text-sm font-medium [overflow-wrap:anywhere] sm:truncate" title={t.name}>{t.name}</p>
+                {t.description && <p className="line-clamp-2 text-xs text-muted-foreground [overflow-wrap:anywhere] sm:truncate" title={t.description}>{t.description}</p>}
+                {t.track_id && <p className="text-xs text-muted-foreground [overflow-wrap:anywhere] sm:truncate">{cr.setup.trackLabel}: {tracks.find((x) => x.id === t.track_id)?.name ?? '—'}</p>}
               </div>
               <RowButtons
                 index={i}
@@ -602,8 +623,8 @@ function CriteriaCard() {
             <li key={c.id} className="flex items-center gap-3 py-1.5 pr-1.5 pl-3">
               <span className="num w-6 shrink-0 font-mono text-xs text-muted-foreground">{i + 1}</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{c.name}</p>
-                <p className="num truncate text-xs text-muted-foreground">{cr.setup.criterionSummary(formatX100(c.max_x100), formatX100(c.step_x100), c.weight)}
+                <p className="text-sm font-medium [overflow-wrap:anywhere] sm:truncate" title={c.name}>{c.name}</p>
+                <p className="num text-xs text-muted-foreground [overflow-wrap:anywhere] sm:truncate">{cr.setup.criterionSummary(formatX100(c.max_x100), formatX100(c.step_x100), c.weight)}
                   {tracks.length > 0 && ` · ${c.track_id ? (tracks.find((t) => t.id === c.track_id)?.name ?? '—') : cr.setup.criterionAllTracks}`}
                 </p>
               </div>

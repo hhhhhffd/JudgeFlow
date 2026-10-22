@@ -85,13 +85,14 @@ export function Results() {
       {results.data && results.data.rows.some((r) => r.score_x100 != null) && (
         <>
           {groups.map((g) => (
-            <section key={g.track?.id ?? 'none'} aria-label={heading(g.track)} className="grid gap-2">
+            <section key={g.track?.id ?? 'none'} aria-label={heading(g.track)} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
               {tracks.length > 0 && <h2 className="text-base font-semibold">{heading(g.track)}</h2>}
               <ResultsTable rows={g.rows} criteria={pairwise ? [] : criteriaOfGroup(criteria, g.track)} pairwise={pairwise} open={open} toggle={toggle} />
             </section>
           ))}
           <p className="text-xs text-muted-foreground">
-            {cr.results.quorumNote(results.data.quorum)} {tracks.length > 0 && cr.results.trackNote} {cr.results.tiesNote}{' '}
+            {cr.results.quorumNote(results.data.quorum)} {tracks.length > 0 && cr.results.trackNote}{' '}
+            <span className="rounded bg-signal px-1 text-[11px] font-semibold text-signal-foreground">=</span> {cr.results.tiesNote}{' '}
             {results.data.rows.some((r) => r.raw_score_x100 != null) && cr.results.normalizedNote}
           </p>
         </>
@@ -117,7 +118,7 @@ function ResultsTable({ rows, criteria, pairwise, open, toggle }: { rows: Rankin
   const normalized = rows.some((r) => r.raw_score_x100 != null)
   const extra = pairwise ? RECORD_COLUMNS.length : criteria.length
   return (
-    <div className="rounded-xl border bg-card">
+    <div className="max-w-full min-w-0 rounded-xl border bg-card">
       <Table>
         <TableHeader>
           <TableRow>
@@ -162,18 +163,18 @@ function ResultsTable({ rows, criteria, pairwise, open, toggle }: { rows: Rankin
                   <TableCell className="num font-mono">
                     {row.rank ?? '—'}
                     {row.tie && (
-                      <span title={cr.results.tie} aria-label={cr.results.tie} className="ml-1 inline-block rounded bg-signal px-1 text-[11px] font-semibold text-signal-foreground">
+                      <span role="img" title={cr.results.tie} aria-label={cr.results.tie} className="ml-1 inline-block rounded bg-signal px-1 text-[11px] font-semibold text-signal-foreground">
                         =
                       </span>
                     )}
                   </TableCell>
                   <TableCell className="max-w-48 font-medium">
-                    <span className="block truncate" title={name}>{name}</span>
+                    <span className="block [overflow-wrap:anywhere] whitespace-normal" title={name}>{name}</span>
                     <span className="mt-0.5 block">
                       {row.score_x100 == null ? (
                         <span className="text-xs font-normal text-muted-foreground">{cr.results.noScore}</span>
                       ) : (
-                        <Badge variant={row.meets_quorum ? 'success' : 'warning'}>{row.meets_quorum ? cr.results.quorumOk : cr.results.quorumNo}</Badge>
+                        !row.meets_quorum && <Badge variant="warning">{cr.results.quorumNo}</Badge>
                       )}
                     </span>
                   </TableCell>

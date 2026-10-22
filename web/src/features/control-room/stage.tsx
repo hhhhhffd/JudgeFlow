@@ -150,6 +150,7 @@ export function StageTab() {
                 <p role="status" className="num text-sm text-muted-foreground">{state.isPending ? '…' : t.progress(revealed, total)}</p>
               </div>
               {state.isError && <p className="text-sm text-destructive">{errorText(state.error)}</p>}
+              {state.data && total > 0 && total < event.stage_top_n && <p className="text-sm text-muted-foreground">{t.progressNote}</p>}
               {state.data && total === 0 && <p className="text-sm text-muted-foreground">{t.noGroups}</p>}
               <Button size="lg" disabled={!canNext} onClick={() => run('next')}>
                 <Play />

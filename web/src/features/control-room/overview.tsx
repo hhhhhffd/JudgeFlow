@@ -113,7 +113,7 @@ function Monitoring() {
                     </th>
                     {m.teams.map((t) => (
                       <th key={t.id} scope="col" className="px-1 py-2 text-xs font-medium text-muted-foreground">
-                        <span className="mx-auto block max-w-20 truncate" title={t.name}>
+                        <span className="mx-auto line-clamp-2 min-w-16 max-w-28 text-center break-words" title={t.name}>
                           {t.name}
                         </span>
                       </th>
@@ -177,7 +177,7 @@ function JudgeCell({ judge }: { judge: JudgeSummary }) {
   const now = useNow()
   return (
     <div className="min-w-0">
-      <p className="max-w-44 truncate font-medium" title={judge.name}>
+      <p className="max-w-56 font-medium break-words line-clamp-2" title={judge.name}>
         {judge.name}
       </p>
       <p className="text-[11px] text-muted-foreground">

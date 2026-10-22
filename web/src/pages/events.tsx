@@ -212,7 +212,7 @@ function CreateEventDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-1.5">
               <Label htmlFor="ev-start">{ru.events.startsAtLabel}</Label>
-              <Input id="ev-start" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+              <Input id="ev-start" type="datetime-local" lang="ru" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="ev-loc">{ru.events.locationLabel}</Label>
@@ -237,6 +237,7 @@ function CreateEventDialog({ open, onOpenChange }: { open: boolean; onOpenChange
             <p className="text-xs text-muted-foreground">{template ? `${template.description} ${cr.setup.templateCriteria(template.criteria.length)}. ${cr.createTemplate.hint}` : cr.createTemplate.hint}</p>
           </div>
           {create.isError && <p role="alert" className="text-sm text-destructive">{errorText(create.error)}</p>}
+          {!title.trim() && <p className="text-xs text-muted-foreground">{ru.events.createHint}</p>}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               {ru.common.cancel}

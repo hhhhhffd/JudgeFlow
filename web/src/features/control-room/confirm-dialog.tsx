@@ -15,6 +15,8 @@ interface Props {
   destructive?: boolean
   pending?: boolean
   error?: string | null
+  /** Optional bullet list shown under the error (e.g. what the event still lacks). */
+  errorList?: string[]
   /** Shows a reason field; confirm is disabled while it is empty. */
   reasonLabel?: string
   /** Shows a field that must equal this text exactly before confirm is enabled. */
@@ -32,7 +34,7 @@ export function ConfirmDialog(props: Props) {
   )
 }
 
-function ConfirmForm({ onOpenChange, title, description, confirmLabel, destructive, pending, error, reasonLabel, typeToConfirm, children, onConfirm }: Props) {
+function ConfirmForm({ onOpenChange, title, description, confirmLabel, destructive, pending, error, errorList, reasonLabel, typeToConfirm, children, onConfirm }: Props) {
   const [reason, setReason] = useState('')
   const [typed, setTyped] = useState('')
   const ready = (!reasonLabel || reason.trim().length > 0) && (!typeToConfirm || typed === typeToConfirm.text)
@@ -66,6 +68,16 @@ function ConfirmForm({ onOpenChange, title, description, confirmLabel, destructi
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
+      )}
+      {errorList && errorList.length > 0 && (
+        <ul className="list-disc pl-5 text-sm text-destructive">
+          {errorList.map((m) => (
+            <li key={m}>{m}</li>
+          ))}
+        </ul>
+      )}
+      {!ready && (
+        <p className="text-xs text-muted-foreground">{reasonLabel && reason.trim().length === 0 ? ru.common.reasonHint : ru.common.typedHint}</p>
       )}
       <DialogFooter>
         <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>

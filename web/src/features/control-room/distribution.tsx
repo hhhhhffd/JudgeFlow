@@ -93,7 +93,7 @@ function DistributionEditor() {
               </th>
               {teams.map((t) => (
                 <th key={t.id} scope="col" className="px-1 py-2 text-xs font-medium text-muted-foreground">
-                  <span className="mx-auto block max-w-20 truncate" title={t.name}>
+                  <span className="mx-auto line-clamp-2 min-w-16 max-w-28 text-center break-words" title={t.name}>
                     {t.name}
                   </span>
                 </th>
@@ -104,7 +104,7 @@ function DistributionEditor() {
             {judges.map((j, ji) => (
               <tr key={j.id} className="border-t">
                 <th scope="row" className="sticky left-0 z-10 bg-card px-3 py-2 text-left font-normal">
-                  <p className={cn('max-w-44 truncate font-medium', !j.is_active && 'text-muted-foreground')} title={j.name}>
+                  <p className={cn('max-w-56 font-medium break-words line-clamp-2', !j.is_active && 'text-muted-foreground')} title={j.name}>
                     {j.name}
                   </p>
                   <p className={cn('num text-[11px]', loads[ji] === 0 ? 'font-medium text-destructive' : 'text-muted-foreground')}>

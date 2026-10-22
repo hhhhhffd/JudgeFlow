@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
-import { MoreHorizontal, Printer } from 'lucide-react'
+import { Link2, MoreHorizontal, Printer } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { eventsApi } from '@/api/endpoints'
 import type { JudgeSummary, JudgeWithLink } from '@/api/types'
@@ -95,6 +95,10 @@ export function JudgesSection() {
                     {cr.judges.lastSeen}: {j.last_seen_at == null ? cr.overview.neverSeen : formatAgo(j.last_seen_at, now)}
                   </p>
                 </div>
+                {/* Links are stored hashed and shown once, so the visible shortcut issues a fresh link (after confirmation). */}
+                <Button variant="ghost" size="icon" disabled={frozen} title={cr.judges.rotate} aria-label={`${cr.judges.rotate}: ${j.name}`} onClick={() => setAction({ kind: 'rotate', judge: j })}>
+                  <Link2 />
+                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" disabled={frozen} aria-label={`${cr.judges.actions}: ${j.name}`}>
