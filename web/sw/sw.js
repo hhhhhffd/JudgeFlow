@@ -31,8 +31,12 @@ async function navigate(request) {
   const timer = setTimeout(() => controller.abort(), NAVIGATION_TIMEOUT_MS)
   try {
     const response = await fetch(request, { signal: controller.signal })
-    if (response.ok) cache.put(SHELL, response.clone())
-    return response
+    if (response.ok) {
+      cache.put(SHELL, response.clone())
+      return response
+    }
+    // A proxy error page (502/503 during a deploy) must not replace a working cached shell.
+    return (await cache.match(SHELL)) ?? response
   } catch {
     const shell = await cache.match(SHELL)
     if (shell) return shell
