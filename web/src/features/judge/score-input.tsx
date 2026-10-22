@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Minus, Plus } from 'lucide-react'
 import type { Criterion } from '@/api/types'
 import { Input } from '@/components/ui/input'
@@ -63,6 +63,22 @@ function NumericInput({ scale, value, disabled, label, onChange }: Props) {
     setDraft(null)
     if (result.value !== value) onChange(result.value)
   }
+
+  // Blur may never fire when the tab is closed or the app is switched away on mobile.
+  const commitRef = useRef(commit)
+  useEffect(() => {
+    commitRef.current = commit
+  })
+  useEffect(() => {
+    const flush = () => commitRef.current()
+    const onVisibility = () => document.visibilityState === 'hidden' && flush()
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', flush)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', flush)
+    }
+  }, [])
 
   function step(dir: 1 | -1) {
     setDraft(null)

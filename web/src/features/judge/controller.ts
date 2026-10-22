@@ -260,11 +260,13 @@ export class DeskController {
       if (this.state.session) this.set({ fromCache: true })
       else this.set({ phase: 'failed', failure: network ? judgeText.failed.offlineText : message })
       window.clearTimeout(this.timers.refreshRetry)
+      if (!this.running) return
       this.timers.refreshRetry = window.setTimeout(() => void this.refresh(), REFRESH_RETRY_MS)
       return
     }
     this.set({ syncing: false, syncError: network && !this.state.online ? null : message })
     window.clearTimeout(this.timers.retry)
+    if (!this.running) return
     this.timers.retry = window.setTimeout(() => void this.flush(), RETRY_MS)
   }
 

@@ -272,6 +272,7 @@ export function Desk({ controller, session }: { controller: DeskController; sess
                           </div>
                         </div>
                         <ScoreInput
+                          key={cellOf(l)}
                           scale={crit}
                           value={row?.value_x100 ?? null}
                           disabled={readOnly}
