@@ -3,9 +3,9 @@ import { Minus, Plus } from 'lucide-react'
 import type { Criterion } from '@/api/types'
 import { Input } from '@/components/ui/input'
 import { judgeText } from '@/i18n/judge'
-import { formatX100, parseX100 } from '@/lib/format'
+import { formatX100 } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { isValidValue, scaleOf, stepValue } from './scoring'
+import { commitDraft, scaleOf, stepValue } from './scoring'
 
 interface Props {
   scale: Pick<Criterion, 'max_x100' | 'step_x100'>
@@ -53,19 +53,26 @@ function NumericInput({ scale, value, disabled, label, onChange }: Props) {
   // While typing, the draft is the source of truth; otherwise the stored value is.
   const [draft, setDraft] = useState<string | null>(null)
   const shown = draft ?? (value === null ? '' : formatX100(value))
-  const invalid = draft !== null && draft.trim() !== '' && !validDraft(draft, scale)
+  const invalid = draft !== null && commitDraft(draft, scale).kind === 'invalid'
 
-  function type(text: string) {
-    setDraft(text)
-    if (text.trim() === '') return onChange(null)
-    const parsed = parseX100(text)
-    if (parsed !== null && isValidValue(parsed, scale)) onChange(parsed)
+  // Committing only when the judge is done typing: "15" on a 0-10 scale must not store "1" on the way.
+  function commit() {
+    if (draft === null) return
+    const result = commitDraft(draft, scale)
+    if (result.kind === 'invalid') return
+    setDraft(null)
+    if (result.value !== value) onChange(result.value)
+  }
+
+  function step(dir: 1 | -1) {
+    setDraft(null)
+    onChange(stepValue(value, dir, scale))
   }
 
   return (
     <div className="flex flex-col gap-1.5">
       <div role="group" aria-label={label} className="flex items-center gap-2">
-        <StepButton label={judgeText.item.minus} disabled={disabled || value === 0} onClick={() => onChange(stepValue(value, -1, scale))}>
+        <StepButton label={judgeText.item.minus} disabled={disabled || value === 0} onClick={() => step(-1)}>
           <Minus />
         </StepButton>
         <Input
@@ -75,11 +82,12 @@ function NumericInput({ scale, value, disabled, label, onChange }: Props) {
           aria-invalid={invalid}
           disabled={disabled}
           value={shown}
-          onChange={(e) => type(e.target.value)}
-          onBlur={() => setDraft(null)}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => e.key === 'Enter' && commit()}
           className="num h-11 w-28 text-center text-lg font-semibold md:text-lg"
         />
-        <StepButton label={judgeText.item.plus} disabled={disabled || value === scale.max_x100} onClick={() => onChange(stepValue(value, 1, scale))}>
+        <StepButton label={judgeText.item.plus} disabled={disabled || value === scale.max_x100} onClick={() => step(1)}>
           <Plus />
         </StepButton>
         <span className="num text-sm text-muted-foreground">/ {formatX100(scale.max_x100)}</span>
@@ -91,11 +99,6 @@ function NumericInput({ scale, value, disabled, label, onChange }: Props) {
       )}
     </div>
   )
-}
-
-function validDraft(text: string, scale: Pick<Criterion, 'max_x100' | 'step_x100'>) {
-  const parsed = parseX100(text)
-  return parsed !== null && isValidValue(parsed, scale)
 }
 
 function StepButton({ label, disabled, onClick, children }: { label: string; disabled: boolean; onClick: () => void; children: React.ReactNode }) {

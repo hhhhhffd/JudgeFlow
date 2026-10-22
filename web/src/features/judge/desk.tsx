@@ -34,6 +34,10 @@ import { getSeenAlertVersion, setSeenAlertVersion } from './storage'
 import { SubmitDialog } from './submit-dialog'
 import { SyncBadge } from './sync-badge'
 
+// Mirrors NOTE_MAX_CHARS of the server (src/routes/judge.rs).
+const NOTE_MAX_CHARS = 2000
+const NOTE_COUNTER_FROM = 1800
+
 type Item = { id: string; name: string; description: string | null; track_id: string | null }
 
 const label = (enabled: boolean, custom: string | null, fallback: string) => (enabled && custom?.trim() ? custom.trim() : fallback)
@@ -299,9 +303,13 @@ export function Desk({ controller, session }: { controller: DeskController; sess
                   disabled={readOnly || !hasScoreInItem}
                   placeholder={judgeText.notes.placeholder}
                   onChange={(e) => controller.setNote(item.id, e.target.value)}
+                  maxLength={NOTE_MAX_CHARS}
                   className="min-h-28"
                 />
-                <p className="text-xs text-muted-foreground">{hasScoreInItem ? judgeText.notes.autosave : judgeText.notes.needScore}</p>
+                <p className="flex justify-between gap-3 text-xs text-muted-foreground">
+                  <span>{hasScoreInItem ? judgeText.notes.autosave : judgeText.notes.needScore}</span>
+                  {note.length >= NOTE_COUNTER_FROM && <span className="num shrink-0">{judgeText.notes.counter(note.length, NOTE_MAX_CHARS)}</span>}
+                </p>
               </div>
             )}
             <Help mode={mode} item={item} entries={lines} activeLineId={line?.id} />

@@ -13,6 +13,7 @@ import type {
 } from '@/api/types'
 import { SHEET_FORMAT } from '@/api/types'
 import { judgeText } from '@/i18n/judge'
+import { parseX100 } from '@/lib/format'
 import { criterionApplies } from '@/lib/tracks'
 
 export interface LocalRow {
@@ -98,7 +99,8 @@ export function mergeServer(rows: Rows, server: JudgeScoreRecord[]): Rows {
     const note = s.note ?? ''
     // Reusing the object keeps unchanged rows out of diffRows, so a refresh does not rewrite IndexedDB.
     next[k] =
-      local && local.value_x100 === s.value_x100 && local.note === note && local.edited_at === s.edited_at && !local.error
+      // The server stores trimmed notes: a local note differing only by edge whitespace is the same note.
+      local && local.value_x100 === s.value_x100 && local.note.trim() === note && local.edited_at === s.edited_at && !local.error
         ? local
         : { team_id: s.team_id, criterion_id: s.criterion_id, value_x100: s.value_x100, note, edited_at: s.edited_at, dirty: false }
   }
@@ -371,6 +373,15 @@ export function scaleOf(c: Pick<Criterion, 'max_x100' | 'step_x100'>): Scale {
 
 export function isValidValue(v: number, c: Pick<Criterion, 'max_x100' | 'step_x100'>): boolean {
   return Number.isInteger(v) && v >= 0 && v <= c.max_x100 && v % c.step_x100 === 0
+}
+
+export type DraftCommit = { kind: 'value'; value: number | null } | { kind: 'invalid' }
+
+/** What a typed draft means once the judge is done typing: empty clears, a valid number is stored, anything else stays a draft. */
+export function commitDraft(text: string, c: Pick<Criterion, 'max_x100' | 'step_x100'>): DraftCommit {
+  if (text.trim() === '') return { kind: 'value', value: null }
+  const parsed = parseX100(text)
+  return parsed !== null && isValidValue(parsed, c) ? { kind: 'value', value: parsed } : { kind: 'invalid' }
 }
 
 /** Stepper: from "not scored" plus goes to one step, minus to zero. */

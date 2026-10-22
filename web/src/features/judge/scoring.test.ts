@@ -5,6 +5,7 @@ import {
   applyEdit,
   canDeleteStored,
   canOverwriteStored,
+  commitDraft,
   pickOrphanKeys,
   applyNote,
   applyResults,
@@ -104,6 +105,31 @@ describe('mergeServer reuse', () => {
     expect(diffRows(rows, merged)).toEqual({ upserts: [], deletes: [] })
     const changed = mergeServer(rows, [{ ...server[0]!, value_x100: 800 }])
     expect(diffRows(rows, changed).upserts).toHaveLength(1)
+  })
+})
+
+describe('mergeServer notes', () => {
+  it('keeps a local note that differs from the trimmed server note only by edge whitespace', () => {
+    const row = { team_id: 't1', criterion_id: 'c1', value_x100: 700, note: 'good job ', edited_at: 50, dirty: false }
+    const rows: Rows = { [k('t1', 'c1')]: row }
+    const merged = mergeServer(rows, [{ team_id: 't1', criterion_id: 'c1', value_x100: 700, note: 'good job', edited_at: 50 }])
+    expect(merged[k('t1', 'c1')]).toBe(row)
+  })
+  it('still adopts a genuinely different server note', () => {
+    const row = { team_id: 't1', criterion_id: 'c1', value_x100: 700, note: 'a', edited_at: 50, dirty: false }
+    const merged = mergeServer({ [k('t1', 'c1')]: row }, [{ team_id: 't1', criterion_id: 'c1', value_x100: 700, note: 'b', edited_at: 60 }])
+    expect(merged[k('t1', 'c1')]!.note).toBe('b')
+  })
+})
+
+describe('commitDraft', () => {
+  const scale = { max_x100: 1000, step_x100: 50 }
+  it('clears on empty, stores a valid number, rejects the rest', () => {
+    expect(commitDraft('  ', scale)).toEqual({ kind: 'value', value: null })
+    expect(commitDraft('7,5', scale)).toEqual({ kind: 'value', value: 750 })
+    expect(commitDraft('15', scale)).toEqual({ kind: 'invalid' })
+    expect(commitDraft('7.3', scale)).toEqual({ kind: 'invalid' })
+    expect(commitDraft('abc', scale)).toEqual({ kind: 'invalid' })
   })
 })
 
