@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, Clipboard, KeyRound, LogOut, Plus, RotateCw, Trash2, Users } from 'lucide-react'
+import { Clipboard, KeyRound, LogOut, Plus, RotateCw, Trash2, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { accessApi } from '@/api/endpoints'
-import type { AccessCredentials, AccessRole, AccessUser, AccessWorkspace, WorkflowPhase } from '@/api/types'
+import type { AccessCredentials, AccessRole, AccessUser, AccessWorkspace, QuestionKind, WorkflowPhase } from '@/api/types'
 import { ErrorState } from '@/components/state-views'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
@@ -13,9 +13,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
 import { errorText } from '@/lib/errors'
 import { openAccessSocket } from './socket'
+import { DeleteButton } from './delete-button'
+import { ParticipantWorkspace } from './participant-workspace'
+
+const questionKindLabel: Record<QuestionKind, string> = {
+  single_choice: 'Один вариант',
+  multiple_choice: 'Несколько вариантов',
+  text: 'Развёрнутый ответ',
+}
 
 const roleLabel: Record<AccessRole, string> = { organizer: 'Организатор', jury: 'Жюри', teacher: 'Педагог', student: 'Студент' }
 const phases: { value: WorkflowPhase; label: string }[] = [
@@ -58,7 +65,7 @@ export default function AccessWorkspacePage() {
         {workspace.current_user.role === 'jury' && <JuryWorkspace data={workspace} />}
         {(workspace.current_user.role === 'teacher' || workspace.current_user.role === 'student') && (
           <ParticipantWorkspace
-            key={workspace.team_draft.map((answer) => `${answer.question_id}:${answer.option_id}:${answer.updated_at}`).join('|')}
+            key={`${workspace.event.id}:${workspace.current_user.id}:${workspace.event.phase}`}
             data={workspace}
           />
         )}
@@ -174,7 +181,7 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
                 {data.teams.map((team) => (
                   <div key={team.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
                     <span className="text-sm">{team.name}</span>
-                    <Button size="icon" variant="ghost" aria-label={`Удалить команду ${team.name}`} onClick={() => { if (window.confirm(`Удалить команду «${team.name}»?`)) deleteTeam.mutate(team.id) }}><Trash2 className="size-4 text-destructive" /></Button>
+                    <DeleteButton label={`Удалить команду ${team.name}`} title={`Удалить команду «${team.name}»?`} description="Команду можно удалить, если в ней нет участников." onDelete={() => deleteTeam.mutateAsync(team.id)} />
                   </div>
                 ))}
               </div>
@@ -192,7 +199,7 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
                   {(user.role === 'teacher' || user.role === 'student') && <Badge variant={user.submitted ? 'default' : 'secondary'}>{user.submitted ? 'Сдано' : 'Не сдано'}</Badge>}
                   {user.role !== 'organizer' && <Button size="icon" variant="ghost" aria-label={`Новый пароль для ${user.name}`} onClick={() => rotatePassword.mutate(user)}><KeyRound className="size-4" /></Button>}
                   {user.role !== 'organizer' && <Button size="icon" variant="ghost" aria-label={`Новая ссылка для ${user.name}`} onClick={() => rotateMagic.mutate(user)}><RotateCw className="size-4" /></Button>}
-                  {data.event.phase === 'setup' && user.role !== 'organizer' && <Button size="icon" variant="ghost" aria-label={`Удалить ${user.name}`} onClick={() => { if (window.confirm(`Удалить пользователя «${user.name}»?`)) deleteUser.mutate(user.id) }}><Trash2 className="size-4 text-destructive" /></Button>}
+                  {data.event.phase === 'setup' && user.role !== 'organizer' && <DeleteButton label={`Удалить ${user.name}`} title={`Удалить пользователя «${user.name}»?`} description="Его пароль и персональная ссылка перестанут работать." onDelete={() => deleteUser.mutateAsync(user.id)} />}
                 </div>
               </div>
             )
@@ -206,36 +213,55 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
 function QuestionsCard({ data }: { data: AccessWorkspace }) {
   const refresh = useRefresh()
   const [audience, setAudience] = useState<'teacher' | 'student'>('teacher')
+  const [kind, setKind] = useState<QuestionKind>('single_choice')
+  const [required, setRequired] = useState(true)
   const [prompt, setPrompt] = useState('')
-  const [options, setOptions] = useState('')
+  const [options, setOptions] = useState(['', ''])
   const create = useMutation({
     mutationFn: accessApi.createQuestion,
-    onSuccess: () => { setPrompt(''); setOptions(''); void refresh() },
+    onSuccess: () => { setPrompt(''); setOptions(['', '']); void refresh() },
   })
   const remove = useMutation({ mutationFn: accessApi.deleteQuestion, onSuccess: refresh })
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    create.mutate({ audience, prompt, options: options.split('\n').map((item) => item.trim()).filter(Boolean) })
+    create.mutate({ audience, prompt, kind, required, options: kind === 'text' ? [] : options.map((item) => item.trim()) })
   }
   return (
     <Card>
-      <CardHeader><CardTitle>Формы заданий</CardTitle><CardDescription>Вопросы с одним вариантом ответа — как в Google Forms.</CardDescription></CardHeader>
+      <CardHeader><CardTitle>Формы заданий</CardTitle><CardDescription>Выбор одного или нескольких вариантов и развёрнутые ответы.</CardDescription></CardHeader>
       <CardContent className="grid gap-5">
         {data.event.phase === 'setup' && (
           <form className="grid gap-3 rounded-lg border bg-muted/35 p-3" onSubmit={submit}>
-            <div className="grid gap-1.5"><Label>Для кого</Label><Select value={audience} onValueChange={(value) => setAudience(value as 'teacher' | 'student')}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="teacher">Педагоги</SelectItem><SelectItem value="student">Студенты</SelectItem></SelectContent></Select></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5"><Label htmlFor="question-audience">Для кого</Label><Select value={audience} onValueChange={(value) => setAudience(value as 'teacher' | 'student')}><SelectTrigger id="question-audience" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="teacher">Педагоги</SelectItem><SelectItem value="student">Студенты</SelectItem></SelectContent></Select></div>
+              <div className="grid gap-1.5"><Label htmlFor="question-kind">Тип вопроса</Label><Select value={kind} onValueChange={(value) => setKind(value as QuestionKind)}><SelectTrigger id="question-kind" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(questionKindLabel).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+            </div>
             <div className="grid gap-1.5"><Label htmlFor="question-prompt">Вопрос</Label><Input id="question-prompt" required maxLength={500} value={prompt} onChange={(event) => setPrompt(event.target.value)} /></div>
-            <div className="grid gap-1.5"><Label htmlFor="question-options">Варианты</Label><Textarea id="question-options" required rows={4} placeholder="Каждый вариант с новой строки" value={options} onChange={(event) => setOptions(event.target.value)} /></div>
-            <p className="text-xs text-muted-foreground">Нужно минимум два непустых варианта, каждый с новой строки.</p>
-            <Button type="submit" disabled={!prompt.trim() || options.split('\n').filter((item) => item.trim()).length < 2 || create.isPending}>Добавить вопрос</Button>
+            {kind === 'text' ? (
+              <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Участники напишут ответ в большом текстовом поле. До 20 000 символов.</p>
+            ) : (
+              <div className="grid gap-2">
+                {options.map((option, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <span aria-hidden className={`size-4 shrink-0 border border-muted-foreground ${kind === 'single_choice' ? 'rounded-full' : 'rounded-sm'}`} />
+                    <Input aria-label={`Вариант ${index + 1}`} placeholder={`Вариант ${index + 1}`} required maxLength={300} value={option} onChange={(event) => setOptions((current) => current.map((item, at) => at === index ? event.target.value : item))} />
+                    <Button type="button" size="icon" variant="ghost" aria-label={`Убрать вариант ${index + 1}`} disabled={options.length <= 2} onClick={() => setOptions((current) => current.filter((_, at) => at !== index))}><Trash2 className="size-4" /></Button>
+                  </div>
+                ))}
+                <Button type="button" variant="ghost" className="w-fit" disabled={options.length >= 12} onClick={() => setOptions((current) => [...current, ''])}><Plus className="size-4" />Добавить вариант</Button>
+                <p className="text-xs text-muted-foreground">От 2 до 12 вариантов. {kind === 'multiple_choice' ? 'Участник сможет отметить несколько ответов.' : 'Участник выберет один ответ.'}</p>
+              </div>
+            )}
+            <label className="flex cursor-pointer items-center gap-3 text-sm"><input type="checkbox" className="size-4 accent-primary" checked={required} onChange={(event) => setRequired(event.target.checked)} />Обязательный вопрос</label>
+            <Button type="submit" disabled={!prompt.trim() || (kind !== 'text' && options.some((option) => !option.trim())) || create.isPending}>Добавить вопрос</Button>
           </form>
         )}
         {(create.isError || remove.isError) && <p role="alert" className="text-sm text-destructive">{errorText((create.error || remove.error)!)}</p>}
         <div className="grid gap-3">
           {data.questions.map((question, index) => (
             <div key={question.id} className="rounded-lg border p-4">
-              <div className="flex items-start justify-between gap-3"><div><Badge variant="outline">{question.audience === 'teacher' ? 'Педагоги' : 'Студенты'}</Badge><p className="mt-2 font-medium">{index + 1}. {question.prompt}</p></div>{data.event.phase === 'setup' && <Button size="icon" variant="ghost" aria-label="Удалить вопрос" onClick={() => remove.mutate(question.id)}><Trash2 className="size-4 text-destructive" /></Button>}</div>
-              <p className="mt-2 text-xs text-muted-foreground">{question.options.map((option) => option.label).join(' · ')}</p>
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><Badge variant="outline">{question.audience === 'teacher' ? 'Педагоги' : 'Студенты'}</Badge><p className="mt-2 break-words font-medium">{index + 1}. {question.prompt}{question.required && <span className="ml-1 text-destructive" aria-label="Обязательный вопрос">*</span>}</p><p className="mt-1 text-xs text-muted-foreground">{questionKindLabel[question.kind]}</p></div>{data.event.phase === 'setup' && <DeleteButton label={`Удалить вопрос ${question.prompt}`} title="Удалить вопрос?" description={question.prompt} onDelete={() => remove.mutateAsync(question.id)} />}</div>
+              {question.kind !== 'text' && <p className="mt-2 break-words text-xs text-muted-foreground">{question.options.map((option) => option.label).join(' · ')}</p>}
             </div>
           ))}
           {!data.questions.length && <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">Добавьте вопросы для педагогов и студентов.</p>}
@@ -243,49 +269,6 @@ function QuestionsCard({ data }: { data: AccessWorkspace }) {
       </CardContent>
     </Card>
   )
-}
-
-function ParticipantWorkspace({ data }: { data: AccessWorkspace }) {
-  const refresh = useRefresh()
-  const user = data.current_user
-  const record = data.users.find((item) => item.id === user.id)
-  const submitted = record?.submitted ?? false
-  const questions = data.questions.filter((question) => question.audience === user.role)
-  const sharedAnswers = Object.fromEntries(data.team_draft.map((answer) => [answer.question_id, answer.option_id]))
-  const [answers, setAnswers] = useState<Record<string, string>>(sharedAnswers)
-  const saveDraft = useMutation({ mutationFn: ({ questionId, optionId }: { questionId: string; optionId: string }) => accessApi.saveTeamDraft(questionId, optionId) })
-  const submit = useMutation({
-    mutationFn: () => accessApi.submit(questions.map((question) => ({ question_id: question.id, option_id: answers[question.id]! }))),
-    onSuccess: refresh,
-  })
-  const teamTeachers = data.users.filter((item) => item.team_id === user.team_id && item.role === 'teacher')
-  const locked = user.role === 'teacher'
-    ? data.event.phase !== 'teachers'
-    : data.event.phase !== 'students' || teamTeachers.some((teacher) => !teacher.submitted)
-  if (submitted) return <Completion />
-  if (locked) return <Locked role={user.role} phase={data.event.phase} />
-  return (
-    <div className="mx-auto grid max-w-3xl gap-6">
-      <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">{roleLabel[user.role]}</p><h1 className="mt-2 text-3xl font-semibold">Ответьте на вопросы</h1></div>
-      {questions.map((question, index) => {
-        const shared = data.team_draft.find((answer) => answer.question_id === question.id)
-        return (
-          <Card key={question.id}><CardHeader><CardTitle className="text-lg"><span className="mr-2 text-primary">{index + 1}.</span>{question.prompt}</CardTitle>{shared && <CardDescription>Последнее изменение: {shared.edited_by_name}</CardDescription>}</CardHeader><CardContent className="grid gap-2">{question.options.map((option) => <label key={option.id} className="flex cursor-pointer items-center gap-3 rounded-lg border p-3 has-[:checked]:border-primary has-[:checked]:bg-accent"><input type="radio" name={question.id} value={option.id} checked={answers[question.id] === option.id} onChange={() => { setAnswers((current) => ({ ...current, [question.id]: option.id })); saveDraft.mutate({ questionId: question.id, optionId: option.id }) }} /><span>{option.label}</span></label>)}</CardContent></Card>
-        )
-      })}
-      {(submit.isError || saveDraft.isError) && <p role="alert" className="text-sm text-destructive">{errorText((submit.error || saveDraft.error)!)}</p>}
-      <div className="sticky bottom-4 flex items-center justify-between gap-4 rounded-xl bg-primary p-4 text-primary-foreground shadow-xl"><p className="text-sm">После отправки изменить ответы нельзя.</p><Button variant="secondary" disabled={Object.keys(answers).length !== questions.length || submit.isPending} onClick={() => submit.mutate()}>Сдать работу</Button></div>
-    </div>
-  )
-}
-
-function Completion() {
-  return <div className="mx-auto mt-20 max-w-lg text-center"><div className="mx-auto grid size-16 place-items-center rounded-full bg-success-soft text-success"><Check className="size-8" /></div><h1 className="mt-5 text-3xl font-semibold">Ответы приняты</h1><p className="mt-2 text-muted-foreground">Статус уже виден организатору и жюри.</p></div>
-}
-
-function Locked({ role, phase }: { role: AccessRole; phase: WorkflowPhase }) {
-  const text = role === 'student' && phase === 'students' ? 'Ждём, пока все педагоги вашей команды отправят ответы.' : 'Организатор ещё не открыл ваш этап.'
-  return <div className="mx-auto mt-20 max-w-lg text-center"><div className="mx-auto grid size-16 place-items-center rounded-full bg-warning-soft text-warning"><ChevronDown className="size-8" /></div><h1 className="mt-5 text-3xl font-semibold">Задание пока закрыто</h1><p className="mt-2 text-muted-foreground">{text}</p></div>
 }
 
 function JuryWorkspace({ data }: { data: AccessWorkspace }) {
@@ -315,7 +298,7 @@ function JuryTeamForm({ teamId, members, audience, data }: { teamId: string; mem
   return (
     <details className="group p-4">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-4"><div><p className="font-medium">{audience === 'teacher' ? 'Педагоги команды' : 'Студенты команды'}</p><p className="text-xs text-muted-foreground">{members.map((member) => member.name).join(', ')}</p></div><Badge variant={submitted ? 'default' : 'secondary'}>{submitted ? 'Сделано' : 'Не сделано'}</Badge></summary>
-      {submitted && <div className="mt-4 grid gap-3 border-t pt-4">{answers.map((answer) => { const question = data.questions.find((item) => item.id === answer.question_id); const option = question?.options.find((item) => item.id === answer.option_id); return <div key={answer.question_id}><p className="text-xs text-muted-foreground">{question?.prompt}</p><p className="font-medium">{option?.label}</p><p className="text-xs text-muted-foreground">Последнее изменение: {answer.edited_by_name}</p></div> })}</div>}
+      {submitted && <div className="mt-4 grid gap-3 border-t pt-4">{answers.map((answer) => { const question = data.questions.find((item) => item.id === answer.question_id); const labels = question?.options.filter((item) => answer.option_ids.includes(item.id)).map((item) => item.label); return <div key={answer.question_id}><p className="text-xs text-muted-foreground">{question?.prompt}</p><p className="whitespace-pre-wrap break-words font-medium">{question?.kind === 'text' ? answer.text : labels?.join(', ')}</p><p className="text-xs text-muted-foreground">Последнее изменение: {answer.edited_by_name}</p></div> })}</div>}
     </details>
   )
 }

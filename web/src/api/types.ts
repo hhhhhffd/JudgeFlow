@@ -4,6 +4,7 @@
 export type Id = string
 export type AccessRole = 'organizer' | 'jury' | 'teacher' | 'student'
 export type WorkflowPhase = 'setup' | 'teachers' | 'students' | 'finished'
+export type QuestionKind = 'single_choice' | 'multiple_choice' | 'text'
 export type Role = 'owner' | 'admin'
 export type EventStatus = 'draft' | 'judging' | 'locked' | 'finalized' | 'published'
 export type ScoringMode = 'team' | 'criterion' | 'pairwise'
@@ -41,7 +42,14 @@ export interface AccessQuestion {
   id: Id
   audience: 'teacher' | 'student'
   prompt: string
+  kind: QuestionKind
+  required: boolean
   options: AccessQuestionOption[]
+}
+export interface AccessAnswer {
+  question_id: Id
+  option_ids: Id[]
+  text: string
 }
 export interface AccessWorkspace {
   event: { id: Id; title: string; phase: WorkflowPhase }
@@ -53,7 +61,8 @@ export interface AccessWorkspace {
     team_id: Id
     audience: 'teacher' | 'student'
     question_id: Id
-    option_id: Id
+    option_ids: Id[]
+    text: string
     edited_by: Id
     edited_by_name: string
     updated_at: number

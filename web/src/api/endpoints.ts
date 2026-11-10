@@ -37,14 +37,14 @@ export const accessApi = {
   deleteUser: (id: T.Id) => request<void>(`/api/access/users/${id}`, { method: 'DELETE' }),
   rotatePassword: (id: T.Id) => request<{ password: string }>(`/api/access/users/${id}/password`, { method: 'POST' }),
   rotateMagic: (id: T.Id) => request<{ magic_url: string }>(`/api/access/users/${id}/magic`, { method: 'POST' }),
-  createQuestion: (body: { audience: 'teacher' | 'student'; prompt: string; options: string[] }) =>
+  createQuestion: (body: { audience: 'teacher' | 'student'; prompt: string; kind: T.QuestionKind; required: boolean; options: string[] }) =>
     request<T.AccessQuestion>('/api/access/questions', { method: 'POST', body }),
   deleteQuestion: (id: T.Id) => request<void>(`/api/access/questions/${id}`, { method: 'DELETE' }),
   setPhase: (phase: T.WorkflowPhase) => request<{ phase: T.WorkflowPhase }>('/api/access/phase', { method: 'PATCH', body: { phase } }),
   resetWorkflow: () => request<{ phase: 'setup' }>('/api/access/reset', { method: 'POST' }),
-  saveTeamDraft: (question_id: T.Id, option_id: T.Id) =>
-    request<void>('/api/access/team-draft', { method: 'PATCH', body: { question_id, option_id } }),
-  submit: (answers: { question_id: T.Id; option_id: T.Id }[]) => request<void>('/api/access/submit', { method: 'POST', body: { answers } }),
+  saveTeamDraft: (answer: T.AccessAnswer) =>
+    request<void>('/api/access/team-draft', { method: 'PATCH', body: answer }),
+  submit: () => request<void>('/api/access/submit', { method: 'POST' }),
 }
 
 export const invitePublicApi = {

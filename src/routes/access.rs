@@ -80,7 +80,20 @@ struct CreateTeamRequest {
 struct CreateQuestionRequest {
     audience: String,
     prompt: String,
+    #[serde(default = "default_question_kind")]
+    kind: String,
+    #[serde(default = "default_required")]
+    required: bool,
+    #[serde(default)]
     options: Vec<String>,
+}
+
+fn default_question_kind() -> String {
+    "single_choice".into()
+}
+
+fn default_required() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -89,20 +102,12 @@ struct PhaseRequest {
 }
 
 #[derive(Deserialize)]
-struct SubmitRequest {
-    answers: Vec<AnswerRequest>,
-}
-
-#[derive(Deserialize)]
 struct AnswerRequest {
     question_id: String,
-    option_id: String,
-}
-
-#[derive(Deserialize)]
-struct TeamDraftRequest {
-    question_id: String,
-    option_id: String,
+    #[serde(default)]
+    option_ids: Vec<String>,
+    #[serde(default)]
+    text: String,
 }
 
 fn organizer(session: &EventSession) -> AppResult<&EventUser> {
@@ -363,7 +368,8 @@ async fn workspace(State(state): State<AppState>, session: EventSession) -> AppR
         "submitted_at": row.get::<Option<i64>, _>("submitted_at"),
     }))
     .collect::<Vec<_>>();
-    let questions = load_questions(&state, &session.user.event_id).await?;
+    let questions =
+        load_questions(&mut *state.pool.acquire().await?, &session.user.event_id).await?;
     let team_draft = if matches!(session.user.role.as_str(), "organizer" | "jury") {
         load_team_draft(&state, &session.user.event_id, None, None).await?
     } else if matches!(session.user.role.as_str(), "teacher" | "student") {
@@ -398,7 +404,7 @@ async fn load_team_draft(
     audience: Option<&str>,
 ) -> AppResult<Vec<Value>> {
     let rows = sqlx::query(
-        "SELECT a.team_id, q.audience, a.question_id, a.option_id, a.edited_by, u.name edited_by_name, \
+        "SELECT a.team_id, q.audience, a.question_id, a.option_ids, a.text, a.edited_by, u.name edited_by_name, \
          a.updated_at, (s.team_id IS NOT NULL) submitted \
          FROM team_form_answers a \
          JOIN form_questions q ON q.id = a.question_id \
@@ -414,21 +420,23 @@ async fn load_team_draft(
     .bind(audience)
     .fetch_all(&state.pool)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            json!({
+    rows.into_iter()
+        .map(|row| -> AppResult<Value> {
+            let option_ids: Vec<String> = serde_json::from_str(row.get::<&str, _>("option_ids"))
+                .map_err(|error| AppError::Internal(error.into()))?;
+            Ok(json!({
                 "team_id": row.get::<String, _>("team_id"),
                 "audience": row.get::<String, _>("audience"),
                 "question_id": row.get::<String, _>("question_id"),
-                "option_id": row.get::<String, _>("option_id"),
+                "option_ids": option_ids,
+                "text": row.get::<String, _>("text"),
                 "edited_by": row.get::<String, _>("edited_by"),
                 "edited_by_name": row.get::<String, _>("edited_by_name"),
                 "updated_at": row.get::<i64, _>("updated_at"),
                 "submitted": row.get::<bool, _>("submitted"),
-            })
+            }))
         })
-        .collect())
+        .collect::<AppResult<Vec<_>>>()
 }
 
 async fn create_team(
@@ -687,13 +695,24 @@ async fn create_question(
         return Err(AppError::Validation("Неизвестная аудитория".into()));
     }
     let prompt = clean_required(&req.prompt, "Вопрос", 500)?;
+    if !matches!(
+        req.kind.as_str(),
+        "single_choice" | "multiple_choice" | "text"
+    ) {
+        return Err(AppError::Validation("Неизвестный тип вопроса".into()));
+    }
     let options = req
         .options
         .iter()
         .map(|option| clean_required(option, "Вариант ответа", 300))
         .collect::<AppResult<Vec<_>>>()?;
-    if !(2..=12).contains(&options.len()) {
+    if req.kind != "text" && !(2..=12).contains(&options.len()) {
         return Err(AppError::Validation("Нужно от 2 до 12 вариантов".into()));
+    }
+    if req.kind == "text" && !options.is_empty() {
+        return Err(AppError::Validation(
+            "У текстового вопроса нет вариантов ответа".into(),
+        ));
     }
     let mut tx = begin_write(&state.pool).await?;
     if event_phase(&mut tx, &organizer.event_id).await? != "setup" {
@@ -711,13 +730,15 @@ async fn create_question(
     .await?;
     let question_id = new_id();
     sqlx::query(
-        "INSERT INTO form_questions (id, event_id, audience, prompt, sort_order) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO form_questions (id, event_id, audience, prompt, sort_order, kind, required) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&question_id)
     .bind(&organizer.event_id)
     .bind(&req.audience)
     .bind(&prompt)
     .bind(sort_order)
+    .bind(&req.kind)
+    .bind(req.required)
     .execute(&mut *tx)
     .await?;
     let mut option_values = Vec::new();
@@ -739,7 +760,7 @@ async fn create_question(
         .sse
         .notify(&organizer.event_id, ChangeKind::Composition);
     Ok(Json(
-        json!({ "id": question_id, "audience": req.audience, "prompt": prompt, "options": option_values }),
+        json!({ "id": question_id, "audience": req.audience, "prompt": prompt, "kind": req.kind, "required": req.required, "options": option_values }),
     ))
 }
 
@@ -914,14 +935,14 @@ async fn reset_workflow(
     Ok(Json(json!({ "phase": "setup" })))
 }
 
-async fn load_questions(state: &AppState, event_id: &str) -> AppResult<Vec<Value>> {
+async fn load_questions(conn: &mut SqliteConnection, event_id: &str) -> AppResult<Vec<Value>> {
     let rows = sqlx::query(
-        "SELECT q.id, q.audience, q.prompt, o.id option_id, o.label option_label \
-         FROM form_questions q JOIN form_options o ON o.question_id = q.id \
+        "SELECT q.id, q.audience, q.prompt, q.kind, q.required, o.id option_id, o.label option_label \
+         FROM form_questions q LEFT JOIN form_options o ON o.question_id = q.id \
          WHERE q.event_id = ? ORDER BY q.audience, q.sort_order, q.rowid, o.sort_order, o.rowid",
     )
     .bind(event_id)
-    .fetch_all(&state.pool)
+    .fetch_all(conn)
     .await?;
     let mut questions: Vec<Value> = Vec::new();
     for row in rows {
@@ -935,133 +956,60 @@ async fn load_questions(state: &AppState, event_id: &str) -> AppResult<Vec<Value
                 "id": id,
                 "audience": row.get::<String, _>("audience"),
                 "prompt": row.get::<String, _>("prompt"),
+                "kind": row.get::<String, _>("kind"),
+                "required": row.get::<bool, _>("required"),
                 "options": [],
             }));
         }
-        questions
-            .last_mut()
-            .expect("question inserted")
-            .get_mut("options")
-            .and_then(Value::as_array_mut)
-            .expect("options is array")
-            .push(json!({
-                "id": row.get::<String, _>("option_id"),
-                "label": row.get::<String, _>("option_label"),
-            }));
+        if let Some(option_id) = row.get::<Option<String>, _>("option_id") {
+            questions
+                .last_mut()
+                .expect("question inserted")
+                .get_mut("options")
+                .and_then(Value::as_array_mut)
+                .expect("options is array")
+                .push(json!({
+                    "id": option_id,
+                    "label": row.get::<String, _>("option_label"),
+                }));
+        }
     }
     Ok(questions)
 }
 
-async fn save_team_draft(
-    State(state): State<AppState>,
-    session: EventSession,
-    Json(req): Json<TeamDraftRequest>,
-) -> AppResult<StatusCode> {
-    if !matches!(session.user.role.as_str(), "teacher" | "student") {
-        return Err(AppError::Forbidden(
-            "Эта роль не может менять командный черновик",
-        ));
-    }
-    let team_id = session
-        .user
-        .team_id
-        .as_deref()
-        .ok_or_else(|| AppError::InvalidState("Участник не состоит в команде".into(), None))?;
-    let expected_phase = if session.user.role == "teacher" {
-        "teachers"
-    } else {
-        "students"
-    };
-    let valid: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM form_questions q \
-         JOIN form_options o ON o.question_id = q.id \
-         JOIN events e ON e.id = q.event_id \
-         WHERE q.id = ? AND o.id = ? AND q.event_id = ? AND q.audience = ? \
-         AND e.workflow_phase = ?)",
-    )
-    .bind(&req.question_id)
-    .bind(&req.option_id)
-    .bind(&session.user.event_id)
-    .bind(&session.user.role)
-    .bind(expected_phase)
-    .fetch_one(&state.pool)
-    .await?;
-    if !valid {
-        return Err(AppError::InvalidState(
-            "Этот ответ сейчас нельзя сохранить".into(),
-            None,
-        ));
-    }
-    let submitted: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM team_form_submissions WHERE team_id = ? AND audience = ?)",
-    )
-    .bind(team_id)
-    .bind(&session.user.role)
-    .fetch_one(&state.pool)
-    .await?;
-    if submitted {
-        return Err(AppError::Conflict("Командная форма уже отправлена".into()));
-    }
-    let teachers_submitted: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM team_form_submissions WHERE team_id = ? AND audience = 'teacher')",
-    ).bind(team_id).fetch_one(&state.pool).await?;
-    if session.user.role == "student" && !teachers_submitted {
-        return Err(AppError::InvalidState(
-            "Сначала форму должны сдать все педагоги команды".into(),
-            None,
-        ));
-    }
-    sqlx::query(
-        "INSERT INTO team_form_answers \
-         (team_id, question_id, option_id, edited_by, updated_at) VALUES (?, ?, ?, ?, ?) \
-         ON CONFLICT(team_id, question_id) DO UPDATE SET \
-         option_id = excluded.option_id, edited_by = excluded.edited_by, updated_at = excluded.updated_at",
-    )
-    .bind(team_id)
-    .bind(&req.question_id)
-    .bind(&req.option_id)
-    .bind(&session.user.id)
-    .bind(now_ms())
-    .execute(&state.pool)
-    .await?;
-    state
-        .sse
-        .notify(&session.user.event_id, ChangeKind::Composition);
-    Ok(StatusCode::NO_CONTENT)
-}
-
-async fn submit(
-    State(state): State<AppState>,
-    session: EventSession,
-    Json(req): Json<SubmitRequest>,
-) -> AppResult<StatusCode> {
-    if !matches!(session.user.role.as_str(), "teacher" | "student") {
+async fn check_form_access(conn: &mut SqliteConnection, user: &EventUser) -> AppResult<()> {
+    if !matches!(user.role.as_str(), "teacher" | "student") {
         return Err(AppError::Forbidden("Эта роль не сдаёт форму"));
     }
-    let phase: String = sqlx::query_scalar("SELECT workflow_phase FROM events WHERE id = ?")
-        .bind(&session.user.event_id)
-        .fetch_one(&state.pool)
-        .await?;
-    let expected_phase = if session.user.role == "teacher" {
+    let expected_phase = if user.role == "teacher" {
         "teachers"
     } else {
         "students"
     };
-    if phase != expected_phase {
+    if event_phase(conn, &user.event_id).await? != expected_phase {
         return Err(AppError::InvalidState(
             "Ваш этап сейчас закрыт".into(),
             None,
         ));
     }
-    let team_id = session
-        .user
+    let team_id = user
         .team_id
         .as_deref()
         .ok_or_else(|| AppError::InvalidState("Участник не состоит в команде".into(), None))?;
-    if session.user.role == "student" {
+    let submitted: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM team_form_submissions WHERE team_id = ? AND audience = ?)",
+    )
+    .bind(team_id)
+    .bind(&user.role)
+    .fetch_one(&mut *conn)
+    .await?;
+    if submitted {
+        return Err(AppError::Conflict("Командная форма уже отправлена".into()));
+    }
+    if user.role == "student" {
         let teachers_submitted: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM team_form_submissions WHERE team_id = ? AND audience = 'teacher')",
-        ).bind(team_id).fetch_one(&state.pool).await?;
+        ).bind(team_id).fetch_one(&mut *conn).await?;
         if !teachers_submitted {
             return Err(AppError::InvalidState(
                 "Сначала форму должны сдать все педагоги вашей команды".into(),
@@ -1069,50 +1017,121 @@ async fn submit(
             ));
         }
     }
-    let questions = load_questions(&state, &session.user.event_id).await?;
+    Ok(())
+}
+
+fn validate_answer(
+    question: &Value,
+    answer: &AnswerRequest,
+    final_submission: bool,
+) -> AppResult<()> {
+    let empty = if question["kind"] == "text" {
+        if !answer.option_ids.is_empty()
+            || answer.text.chars().count() > 20_000
+            || answer
+                .text
+                .chars()
+                .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+        {
+            return Err(AppError::Validation("Текстовый ответ должен быть не длиннее 20 000 символов и не содержать вариантов выбора".into()));
+        }
+        answer.text.trim().is_empty()
+    } else {
+        let options = question["options"].as_array().expect("question options");
+        if !answer.text.is_empty()
+            || answer.option_ids.len() > options.len()
+            || (question["kind"] == "single_choice" && answer.option_ids.len() > 1)
+            || answer.option_ids.iter().enumerate().any(|(index, id)| {
+                answer.option_ids[..index].contains(id)
+                    || !options.iter().any(|option| option["id"] == *id)
+            })
+        {
+            return Err(AppError::Validation("Некорректные варианты ответа".into()));
+        }
+        answer.option_ids.is_empty()
+    };
+    if final_submission && question["required"] == true && empty {
+        return Err(AppError::Validation(format!(
+            "Ответьте на обязательный вопрос: {}",
+            question["prompt"].as_str().unwrap_or_default()
+        )));
+    }
+    Ok(())
+}
+
+async fn save_team_draft(
+    State(state): State<AppState>,
+    session: EventSession,
+    Json(req): Json<AnswerRequest>,
+) -> AppResult<StatusCode> {
+    let mut tx = begin_write(&state.pool).await?;
+    check_form_access(&mut tx, &session.user).await?;
+    let questions = load_questions(&mut tx, &session.user.event_id).await?;
+    let question = questions
+        .iter()
+        .find(|question| {
+            question["id"] == req.question_id && question["audience"] == session.user.role
+        })
+        .ok_or(AppError::NotFound)?;
+    validate_answer(question, &req, false)?;
+    sqlx::query(
+        "INSERT INTO team_form_answers (team_id, question_id, option_ids, text, edited_by, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(team_id, question_id) DO UPDATE SET \
+         option_ids = excluded.option_ids, text = excluded.text, edited_by = excluded.edited_by, updated_at = excluded.updated_at",
+    )
+    .bind(&session.user.team_id)
+    .bind(&req.question_id)
+    .bind(serde_json::to_string(&req.option_ids).map_err(|error| AppError::Internal(error.into()))?)
+    .bind(&req.text)
+    .bind(&session.user.id)
+    .bind(now_ms())
+    .execute(&mut *tx).await?;
+    tx.commit().await?;
+    state
+        .sse
+        .notify(&session.user.event_id, ChangeKind::Composition);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn submit(State(state): State<AppState>, session: EventSession) -> AppResult<StatusCode> {
+    let mut tx = begin_write(&state.pool).await?;
+    check_form_access(&mut tx, &session.user).await?;
+    let questions = load_questions(&mut tx, &session.user.event_id).await?;
     let relevant = questions
         .iter()
         .filter(|question| question["audience"] == session.user.role)
         .collect::<Vec<_>>();
-    if relevant.is_empty() || req.answers.len() != relevant.len() {
-        return Err(AppError::Validation("Ответьте на все вопросы".into()));
+    if relevant.is_empty() {
+        return Err(AppError::Validation("В форме пока нет вопросов".into()));
     }
+    let answers = sqlx::query(
+        "SELECT question_id, option_ids, text FROM team_form_answers WHERE team_id = ?",
+    )
+    .bind(&session.user.team_id)
+    .fetch_all(&mut *tx)
+    .await?;
     for question in &relevant {
         let question_id = question["id"].as_str().expect("question id");
-        let answer = req
-            .answers
+        let row = answers
             .iter()
-            .find(|answer| answer.question_id == question_id)
-            .ok_or_else(|| AppError::Validation("Ответьте на все вопросы".into()))?;
-        let valid = question["options"]
-            .as_array()
-            .expect("options")
-            .iter()
-            .any(|option| option["id"] == answer.option_id);
-        if !valid {
-            return Err(AppError::Validation("Некорректный вариант ответа".into()));
-        }
-    }
-    let mut tx = begin_write(&state.pool).await?;
-    for answer in &req.answers {
-        sqlx::query(
-                "INSERT INTO team_form_answers \
-                 (team_id, question_id, option_id, edited_by, updated_at) VALUES (?, ?, ?, ?, ?) \
-                 ON CONFLICT(team_id, question_id) DO UPDATE SET \
-                 option_id = excluded.option_id, edited_by = excluded.edited_by, updated_at = excluded.updated_at",
-        )
-            .bind(team_id)
-            .bind(&answer.question_id)
-            .bind(&answer.option_id)
-            .bind(&session.user.id)
-            .bind(now_ms())
-            .execute(&mut *tx)
-            .await?;
+            .find(|row| row.get::<&str, _>("question_id") == question_id);
+        let answer = AnswerRequest {
+            question_id: question_id.into(),
+            option_ids: match row {
+                Some(row) => serde_json::from_str(row.get::<&str, _>("option_ids"))
+                    .map_err(|error| AppError::Internal(error.into()))?,
+                None => Vec::new(),
+            },
+            text: row
+                .map(|row| row.get::<String, _>("text"))
+                .unwrap_or_default(),
+        };
+        validate_answer(question, &answer, true)?;
     }
     sqlx::query(
             "INSERT INTO team_form_submissions (team_id, audience, submitted_by, submitted_at) VALUES (?, ?, ?, ?)",
     )
-        .bind(team_id)
+        .bind(&session.user.team_id)
         .bind(&session.user.role)
         .bind(&session.user.id)
         .bind(now_ms())

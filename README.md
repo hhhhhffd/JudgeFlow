@@ -39,7 +39,7 @@ The platform owner creates an event in the usual JudgeFlow control room. In **Se
 
 1. teams and their teachers/students;
 2. jury accounts;
-3. separate multiple-choice forms for teachers and students;
+3. separate forms for teachers and students, with single-choice, multiple-choice and long-text questions (required or optional);
 4. the workflow stages `setup → teachers → students → finished`.
 
 Every user has an independent generated password and revocable magic link. Passwords use Argon2; only token hashes are stored. Teacher and student teammates edit shared answers with the latest editor shown. Open workspaces use WebSockets, so shared answers, stage changes and jury progress update in place without a page reload.
