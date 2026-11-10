@@ -89,7 +89,7 @@ function OrganizerWorkspace({ data }: { data: AccessWorkspace }) {
           <button
             key={item.value}
             type="button"
-            disabled={itemIndex < index || phase.isPending}
+            disabled={itemIndex < index || itemIndex > index + 1 || phase.isPending}
             onClick={() => phase.mutate(item.value)}
             className={`flex min-h-14 items-center gap-2 border-r px-3 text-left text-sm font-medium last:border-r-0 disabled:cursor-not-allowed disabled:opacity-45 ${item.value === data.event.phase ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
           >
@@ -164,7 +164,7 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
               onSubmit={(event) => { event.preventDefault(); createUser.mutate({ name, role, team_id: teamRequired ? teamId || null : null }) }}
             >
               <div className="grid gap-1.5 sm:col-span-2"><Label htmlFor="member-name">Имя</Label><Input id="member-name" required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></div>
-              <div className="grid gap-1.5"><Label>Роль</Label><Select value={role} onValueChange={(value) => setRole(value as AccessRole)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(roleLabel).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+              <div className="grid gap-1.5"><Label>Роль</Label><Select value={role} onValueChange={(value) => setRole(value as AccessRole)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['jury', 'teacher', 'student'] as const).map((value) => <SelectItem key={value} value={value}>{roleLabel[value]}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-1.5"><Label>Команда</Label><Select value={teamId || '__none__'} onValueChange={(value) => setTeamId(value === '__none__' ? '' : value)} disabled={!teamRequired}><SelectTrigger><SelectValue placeholder="Выберите" /></SelectTrigger><SelectContent><SelectItem value="__none__">Без команды</SelectItem>{data.teams.map((team) => <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>)}</SelectContent></Select></div>
               <Button type="submit" className="sm:col-span-2" disabled={!name.trim() || (teamRequired && !teamId) || createUser.isPending}>Создать и показать доступ</Button>
             </form>
@@ -174,7 +174,7 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
                 {data.teams.map((team) => (
                   <div key={team.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
                     <span className="text-sm">{team.name}</span>
-                    <Button size="icon" variant="ghost" aria-label={`Удалить команду ${team.name}`} onClick={() => deleteTeam.mutate(team.id)}><Trash2 className="size-4 text-destructive" /></Button>
+                    <Button size="icon" variant="ghost" aria-label={`Удалить команду ${team.name}`} onClick={() => { if (window.confirm(`Удалить команду «${team.name}»?`)) deleteTeam.mutate(team.id) }}><Trash2 className="size-4 text-destructive" /></Button>
                   </div>
                 ))}
               </div>
@@ -190,9 +190,9 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
                 <div><p className="font-medium">{user.name}</p><p className="text-xs text-muted-foreground">{roleLabel[user.role]}{team ? ` · ${team.name}` : ''}</p></div>
                 <div className="flex items-center gap-2">
                   {(user.role === 'teacher' || user.role === 'student') && <Badge variant={user.submitted ? 'default' : 'secondary'}>{user.submitted ? 'Сдано' : 'Не сдано'}</Badge>}
-                  <Button size="icon" variant="ghost" aria-label={`Новый пароль для ${user.name}`} onClick={() => rotatePassword.mutate(user)}><KeyRound className="size-4" /></Button>
-                  <Button size="icon" variant="ghost" aria-label={`Новая ссылка для ${user.name}`} onClick={() => rotateMagic.mutate(user)}><RotateCw className="size-4" /></Button>
-                  {data.event.phase === 'setup' && user.role !== 'organizer' && <Button size="icon" variant="ghost" aria-label={`Удалить ${user.name}`} onClick={() => deleteUser.mutate(user.id)}><Trash2 className="size-4 text-destructive" /></Button>}
+                  {user.role !== 'organizer' && <Button size="icon" variant="ghost" aria-label={`Новый пароль для ${user.name}`} onClick={() => rotatePassword.mutate(user)}><KeyRound className="size-4" /></Button>}
+                  {user.role !== 'organizer' && <Button size="icon" variant="ghost" aria-label={`Новая ссылка для ${user.name}`} onClick={() => rotateMagic.mutate(user)}><RotateCw className="size-4" /></Button>}
+                  {data.event.phase === 'setup' && user.role !== 'organizer' && <Button size="icon" variant="ghost" aria-label={`Удалить ${user.name}`} onClick={() => { if (window.confirm(`Удалить пользователя «${user.name}»?`)) deleteUser.mutate(user.id) }}><Trash2 className="size-4 text-destructive" /></Button>}
                 </div>
               </div>
             )
@@ -226,6 +226,7 @@ function QuestionsCard({ data }: { data: AccessWorkspace }) {
             <div className="grid gap-1.5"><Label>Для кого</Label><Select value={audience} onValueChange={(value) => setAudience(value as 'teacher' | 'student')}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="teacher">Педагоги</SelectItem><SelectItem value="student">Студенты</SelectItem></SelectContent></Select></div>
             <div className="grid gap-1.5"><Label htmlFor="question-prompt">Вопрос</Label><Input id="question-prompt" required maxLength={500} value={prompt} onChange={(event) => setPrompt(event.target.value)} /></div>
             <div className="grid gap-1.5"><Label htmlFor="question-options">Варианты</Label><Textarea id="question-options" required rows={4} placeholder="Каждый вариант с новой строки" value={options} onChange={(event) => setOptions(event.target.value)} /></div>
+            <p className="text-xs text-muted-foreground">Нужно минимум два непустых варианта, каждый с новой строки.</p>
             <Button type="submit" disabled={!prompt.trim() || options.split('\n').filter((item) => item.trim()).length < 2 || create.isPending}>Добавить вопрос</Button>
           </form>
         )}
@@ -289,9 +290,11 @@ function Locked({ role, phase }: { role: AccessRole; phase: WorkflowPhase }) {
 
 function JuryWorkspace({ data }: { data: AccessWorkspace }) {
   const participants = data.users.filter((user) => user.role === 'teacher' || user.role === 'student')
+  const teamWorks = data.teams.flatMap((team) => (['teacher', 'student'] as const).filter((role) => participants.some((user) => user.team_id === team.id && user.role === role)).map((role) => ({ team, role })))
+  const submittedWorks = teamWorks.filter(({ team, role }) => participants.some((user) => user.team_id === team.id && user.role === role && user.submitted)).length
   return (
     <div className="grid gap-6">
-      <section><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Экран жюри</p><h1 className="mt-2 text-3xl font-semibold">{participants.filter((user) => user.submitted).length} / {participants.length} работ отправлено</h1></section>
+      <section><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Экран жюри</p><h1 className="mt-2 text-3xl font-semibold">{submittedWorks} / {teamWorks.length} командных работ отправлено</h1></section>
       {data.teams.map((team) => {
         const members = participants.filter((user) => user.team_id === team.id)
         const teachers = members.filter((user) => user.role === 'teacher')

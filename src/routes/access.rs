@@ -849,6 +849,12 @@ async fn set_phase(
             None,
         ));
     }
+    if requested > current + 1 {
+        return Err(AppError::InvalidState(
+            "Этапы нужно открывать по порядку".into(),
+            None,
+        ));
+    }
     if req.phase == "teachers" || req.phase == "students" {
         let audience = if req.phase == "teachers" {
             "teacher"

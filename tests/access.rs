@@ -111,6 +111,16 @@ async fn event_access_flow_teacher_then_student_then_jury() {
     .await;
     assert_eq!(student_question.status, StatusCode::OK);
 
+    let skipped_phase = send(
+        &fx.app,
+        Method::PATCH,
+        "/api/access/phase",
+        Some(json!({ "phase": "students" })),
+        Auth::Cookie(&organizer_cookie),
+    )
+    .await;
+    assert_eq!(skipped_phase.status, StatusCode::CONFLICT);
+
     let phase = send(
         &fx.app,
         Method::PATCH,
