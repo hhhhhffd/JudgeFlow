@@ -39,6 +39,7 @@ export const accessApi = {
     request<T.AccessQuestion>('/api/access/questions', { method: 'POST', body }),
   deleteQuestion: (id: T.Id) => request<void>(`/api/access/questions/${id}`, { method: 'DELETE' }),
   setPhase: (phase: T.WorkflowPhase) => request<{ phase: T.WorkflowPhase }>('/api/access/phase', { method: 'PATCH', body: { phase } }),
+  resetWorkflow: () => request<{ phase: 'setup' }>('/api/access/reset', { method: 'POST' }),
   saveTeamDraft: (question_id: T.Id, option_id: T.Id) =>
     request<void>('/api/access/team-draft', { method: 'PATCH', body: { question_id, option_id } }),
   submit: (answers: { question_id: T.Id; option_id: T.Id }[]) => request<void>('/api/access/submit', { method: 'POST', body: { answers } }),

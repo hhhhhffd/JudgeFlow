@@ -76,6 +76,7 @@ function OrganizerWorkspace({ data }: { data: AccessWorkspace }) {
   const refresh = useRefresh()
   const [credentials, setCredentials] = useState<AccessCredentials | null>(null)
   const phase = useMutation({ mutationFn: accessApi.setPhase, onSuccess: refresh })
+  const reset = useMutation({ mutationFn: accessApi.resetWorkflow, onSuccess: refresh })
   const index = phases.findIndex((item) => item.value === data.event.phase)
   return (
     <div className="grid gap-6">
@@ -96,7 +97,13 @@ function OrganizerWorkspace({ data }: { data: AccessWorkspace }) {
           </button>
         ))}
       </div>
-      {phase.isError && <p role="alert" className="text-sm text-destructive">{errorText(phase.error)}</p>}
+      {data.event.phase !== 'setup' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning-soft p-4">
+          <p className="text-sm">Чтобы изменить команды или задания, верните мероприятие в настройку. Старые ответы будут удалены.</p>
+          <Button variant="secondary" disabled={reset.isPending} onClick={() => reset.mutate()}>Вернуть в настройку</Button>
+        </div>
+      )}
+      {(phase.isError || reset.isError) && <p role="alert" className="text-sm text-destructive">{errorText((phase.error || reset.error)!)}</p>}
       {credentials && <CredentialsPanel credentials={credentials} onClose={() => setCredentials(null)} />}
       <div className="grid gap-6 xl:grid-cols-2">
         <PeopleCard data={data} onCredentials={setCredentials} />

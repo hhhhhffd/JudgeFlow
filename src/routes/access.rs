@@ -47,6 +47,7 @@ pub fn router() -> Router<AppState> {
             axum::routing::delete(delete_question),
         )
         .route("/access/phase", patch(set_phase))
+        .route("/access/reset", post(reset_workflow))
         .route("/access/team-draft", patch(save_team_draft))
         .route("/access/submit", post(submit))
 }
@@ -807,6 +808,34 @@ async fn set_phase(
     tx.commit().await?;
     state.sse.notify(&organizer.event_id, ChangeKind::Status);
     Ok(Json(json!({ "phase": req.phase })))
+}
+
+async fn reset_workflow(
+    State(state): State<AppState>,
+    session: EventSession,
+) -> AppResult<Json<Value>> {
+    let organizer = organizer(&session)?;
+    let mut tx = begin_write(&state.pool).await?;
+    sqlx::query(
+        "DELETE FROM team_form_answers WHERE team_id IN (SELECT id FROM teams WHERE event_id = ?)",
+    )
+    .bind(&organizer.event_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM team_form_submissions WHERE team_id IN (SELECT id FROM teams WHERE event_id = ?)",
+    )
+    .bind(&organizer.event_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE events SET workflow_phase = 'setup', updated_at = ? WHERE id = ?")
+        .bind(now_ms())
+        .bind(&organizer.event_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    state.sse.notify(&organizer.event_id, ChangeKind::Status);
+    Ok(Json(json!({ "phase": "setup" })))
 }
 
 async fn load_questions(state: &AppState, event_id: &str) -> AppResult<Vec<Value>> {
