@@ -29,6 +29,7 @@ const USER_NAME_MAX: usize = 80;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/events/{id}/access/bootstrap", post(bootstrap_organizer))
+        .route("/events/{id}/access/enter", post(enter_as_organizer))
         .route("/events/{id}/access/login", post(login))
         .route("/access/magic/{token}", post(magic_login))
         .route("/access/me", get(me))
@@ -187,6 +188,59 @@ async fn bootstrap_organizer(
         "magic_url": access_link(&state, &headers, &magic),
         "login_url": format!("{}/{event_id}/auth", state.config.base_url(&headers)),
     })))
+}
+
+async fn enter_as_organizer(
+    State(state): State<AppState>,
+    session: AdminSession,
+    headers: HeaderMap,
+    Path(event_id): Path<String>,
+) -> AppResult<impl IntoResponse> {
+    let mut tx = begin_write(&state.pool).await?;
+    load_event(&mut tx, &event_id).await?;
+    let organizer_id = if let Some(id) = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM event_users WHERE event_id = ? AND role = 'organizer' AND is_active = 1 LIMIT 1",
+    )
+    .bind(&event_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        id
+    } else {
+        let id = new_id();
+        let password = access::generate_password();
+        sqlx::query(
+            "INSERT INTO event_users \
+             (id, event_id, name, role, password_hash, magic_token_hash, created_at) \
+             VALUES (?, ?, ?, 'organizer', ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&event_id)
+        .bind(&session.admin.name)
+        .bind(access::hash_password(&password)?)
+        .bind(hash_token(&random_token()))
+        .bind(now_ms())
+        .execute(&mut *tx)
+        .await?;
+        id
+    };
+    let event_session = access::create_session(&mut tx, &organizer_id).await?;
+    audit::record(
+        &mut *tx,
+        Some(&event_id),
+        Some(&session.admin.id),
+        "access.organizer_enter",
+        json!({ "organizer_id": organizer_id }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok((
+        [(
+            header::SET_COOKIE,
+            access::session_cookie(&state.config, &headers, &event_session),
+        )],
+        Json(json!({ "ok": true })),
+    ))
 }
 
 async fn login(

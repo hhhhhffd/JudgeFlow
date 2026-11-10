@@ -1,9 +1,9 @@
 import { useId, useState, type ReactNode } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, ClipboardPaste, LayoutTemplate, Lock, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react'
-import { toast } from 'sonner'
+import { useNavigate } from 'react-router-dom'
 import { accessApi, eventsApi } from '@/api/endpoints'
-import type { AccessCredentials, Criterion, Normalization, ScoringMode, Team, Track, UpdateEventRequest } from '@/api/types'
+import type { Criterion, Normalization, ScoringMode, Team, Track, UpdateEventRequest } from '@/api/types'
 import { EmptyState } from '@/components/state-views'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -48,29 +48,15 @@ export function Setup() {
 
 function EventAccessCard() {
   const { event } = useFull()
-  const [name, setName] = useState('')
-  const [credentials, setCredentials] = useState<AccessCredentials | null>(null)
-  const create = useMutation({
-    mutationFn: () => accessApi.bootstrap(event.id, name),
-    onSuccess: setCredentials,
+  const navigate = useNavigate()
+  const enter = useMutation({
+    mutationFn: () => accessApi.enterAsOrganizer(event.id),
+    onSuccess: () => navigate('/event'),
   })
-  const copy = (value: string) => void navigator.clipboard.writeText(value).then(() => toast.success('Скопировано'))
   return (
-    <Card title="Доступ организатора" hint="Создайте персональный пароль и magic-ссылку для человека, который будет проводить это мероприятие.">
-      {credentials ? (
-        <div className="grid gap-3 rounded-lg border border-warning/40 bg-warning-soft p-4">
-          <p className="font-medium">Сохраните доступ для {credentials.user.name}</p>
-          <button type="button" className="break-all rounded-md border bg-card p-3 text-left font-mono text-sm" onClick={() => copy(credentials.password)}>{credentials.password}</button>
-          <button type="button" className="break-all rounded-md border bg-card p-3 text-left font-mono text-xs" onClick={() => copy(credentials.magic_url)}>{credentials.magic_url}</button>
-          <p className="text-xs text-muted-foreground">Пароль и ссылка показываются только сейчас. Нажмите на значение, чтобы скопировать.</p>
-        </div>
-      ) : (
-        <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(e) => { e.preventDefault(); create.mutate() }}>
-          <Input aria-label="Имя организатора мероприятия" required maxLength={80} placeholder="Имя организатора" value={name} onChange={(e) => setName(e.target.value)} />
-          <Button type="submit" disabled={!name.trim() || create.isPending}>Создать доступ</Button>
-        </form>
-      )}
-      {create.isError && <p role="alert" className="mt-3 text-sm text-destructive">{errorText(create.error)}</p>}
+    <Card title="Задания мероприятия" hint="Настройте команды, участников, вопросы и порядок прохождения этапов.">
+      <Button type="button" onClick={() => enter.mutate()} disabled={enter.isPending}>Настроить задания</Button>
+      {enter.isError && <p role="alert" className="mt-3 text-sm text-destructive">{errorText(enter.error)}</p>}
     </Card>
   )
 }

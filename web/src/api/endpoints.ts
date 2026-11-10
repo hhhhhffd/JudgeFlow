@@ -22,6 +22,8 @@ export const authApi = {
 export const accessApi = {
   bootstrap: (eventId: T.Id, name: string) =>
     request<T.AccessCredentials>(`/api/events/${eventId}/access/bootstrap`, { method: 'POST', body: { name } }),
+  enterAsOrganizer: (eventId: T.Id) =>
+    request<{ ok: true }>(`/api/events/${eventId}/access/enter`, { method: 'POST' }),
   login: (eventId: T.Id, password: string) =>
     request<{ ok: true }>(`/api/events/${eventId}/access/login`, { method: 'POST', body: { password } }),
   magic: (token: string) => request<{ ok: true }>(`/api/access/magic/${encodeURIComponent(token)}`, { method: 'POST' }),
