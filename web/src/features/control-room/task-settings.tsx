@@ -6,11 +6,11 @@ import { createAccessApi } from '@/api/endpoints'
 import { ErrorState } from '@/components/state-views'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
-import { ParticipantsSettings, QuestionsSettings, WorkflowSettings } from '@/features/access/workspace'
+import { ParticipantsSettings, QuestionsSettings } from '@/features/access/workspace'
 import { errorText } from '@/lib/errors'
 import { useFull } from './context'
 
-const titles = { questions: 'Вопросы', participants: 'Участники', workflow: 'Этапы заданий' }
+const titles = { questions: 'Вопросы', participants: 'Участники' }
 
 export function TaskSettings({ section }: { section: keyof typeof titles }) {
   const { event } = useFull()
@@ -27,12 +27,11 @@ export function TaskSettings({ section }: { section: keyof typeof titles }) {
         <Button asChild variant="outline" size="sm"><Link to={`/events/${event.id}/setup`}><ArrowLeft className="size-4" />Назад</Link></Button>
         <h2 className="text-lg font-semibold">{titles[section]}</h2>
       </div>
-      {section !== 'workflow' && query.data.event.phase !== 'setup' && (
-        <p className="rounded-xl border bg-muted/50 p-4 text-sm text-muted-foreground">Редактирование доступно на этапе настройки. <Link className="underline underline-offset-4" to={`/events/${event.id}/workflow`}>Открыть этапы заданий</Link></p>
+      {section === 'participants' && query.data.event.phase !== 'setup' && (
+        <p className="rounded-xl border bg-muted/50 p-4 text-sm text-muted-foreground">Участники уже выполняют задания. Управление доступом находится во <Link className="underline underline-offset-4" to={`/events/${event.id}/questions`}>вопросах</Link>.</p>
       )}
       {section === 'questions' && <QuestionsSettings {...props} />}
       {section === 'participants' && <ParticipantsSettings {...props} />}
-      {section === 'workflow' && <WorkflowSettings {...props} />}
     </div>
   )
 }

@@ -46,7 +46,7 @@ pub fn router() -> Router<AppState> {
         .route("/access/questions", post(create_question))
         .route(
             "/access/questions/{id}",
-            axum::routing::delete(delete_question),
+            axum::routing::delete(delete_question).patch(update_question),
         )
         .route("/access/phase", patch(set_phase))
         .route("/access/reset", post(reset_workflow))
@@ -86,6 +86,21 @@ struct CreateQuestionRequest {
     required: bool,
     #[serde(default)]
     options: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdatedOption {
+    id: Option<String>,
+    label: String,
+}
+
+#[derive(Deserialize)]
+struct UpdateQuestionRequest {
+    audience: String,
+    prompt: String,
+    kind: String,
+    required: bool,
+    options: Vec<UpdatedOption>,
 }
 
 fn default_question_kind() -> String {
@@ -685,12 +700,7 @@ async fn rotate_magic(
     ))
 }
 
-async fn create_question(
-    State(state): State<AppState>,
-    session: EventSession,
-    Json(req): Json<CreateQuestionRequest>,
-) -> AppResult<Json<Value>> {
-    let organizer = organizer(&session)?;
+fn validate_question(req: &CreateQuestionRequest) -> AppResult<(String, Vec<String>)> {
     if !matches!(req.audience.as_str(), "teacher" | "student") {
         return Err(AppError::Validation("Неизвестная аудитория".into()));
     }
@@ -714,6 +724,16 @@ async fn create_question(
             "У текстового вопроса нет вариантов ответа".into(),
         ));
     }
+    Ok((prompt, options))
+}
+
+async fn create_question(
+    State(state): State<AppState>,
+    session: EventSession,
+    Json(req): Json<CreateQuestionRequest>,
+) -> AppResult<Json<Value>> {
+    let organizer = organizer(&session)?;
+    let (prompt, options) = validate_question(&req)?;
     let mut tx = begin_write(&state.pool).await?;
     if event_phase(&mut tx, &organizer.event_id).await? != "setup" {
         return Err(AppError::InvalidState(
@@ -762,6 +782,106 @@ async fn create_question(
     Ok(Json(
         json!({ "id": question_id, "audience": req.audience, "prompt": prompt, "kind": req.kind, "required": req.required, "options": option_values }),
     ))
+}
+
+async fn update_question(
+    State(state): State<AppState>,
+    session: EventSession,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateQuestionRequest>,
+) -> AppResult<StatusCode> {
+    let organizer = organizer(&session)?;
+    let definition = CreateQuestionRequest {
+        audience: req.audience,
+        prompt: req.prompt,
+        kind: req.kind,
+        required: req.required,
+        options: req
+            .options
+            .iter()
+            .map(|option| option.label.clone())
+            .collect(),
+    };
+    let (prompt, labels) = validate_question(&definition)?;
+    let mut tx = begin_write(&state.pool).await?;
+    let current = sqlx::query(
+        "SELECT audience, kind, required FROM form_questions WHERE id = ? AND event_id = ?",
+    )
+    .bind(&id)
+    .bind(&organizer.event_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    let old_audience: String = current.get("audience");
+    let answers = sqlx::query("SELECT option_ids FROM team_form_answers WHERE question_id = ?")
+        .bind(&id)
+        .fetch_all(&mut *tx)
+        .await?;
+    let submitted: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM team_form_submissions s JOIN teams t ON t.id = s.team_id WHERE t.event_id = ? AND s.audience = ?)",
+    ).bind(&organizer.event_id).bind(&old_audience).fetch_one(&mut *tx).await?;
+    let format_changed =
+        old_audience != definition.audience || current.get::<String, _>("kind") != definition.kind;
+    if (format_changed && (!answers.is_empty() || submitted))
+        || (submitted && current.get::<bool, _>("required") != definition.required)
+    {
+        return Err(AppError::Conflict("У вопроса уже есть ответы. Формулировку и подписи вариантов можно менять; тип, аудиторию и обязательность отправленных работ менять нельзя".into()));
+    }
+    let old_ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM form_options WHERE question_id = ?")
+            .bind(&id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let mut retained = Vec::new();
+    for option in &req.options {
+        if let Some(option_id) = &option.id {
+            if !old_ids.contains(option_id) || retained.contains(option_id) {
+                return Err(AppError::Validation(
+                    "Некорректный идентификатор варианта ответа".into(),
+                ));
+            }
+            retained.push(option_id.clone());
+        }
+    }
+    for answer in &answers {
+        let selected: Vec<String> = serde_json::from_str(answer.get::<&str, _>("option_ids"))
+            .map_err(|error| AppError::Internal(error.into()))?;
+        if selected
+            .iter()
+            .any(|option_id| !retained.contains(option_id))
+        {
+            return Err(AppError::Conflict("Этот вариант уже выбран участниками. Можно изменить его текст, но нельзя удалить выбранный ответ".into()));
+        }
+    }
+    sqlx::query(
+        "UPDATE form_questions SET audience = ?, prompt = ?, kind = ?, required = ? WHERE id = ?",
+    )
+    .bind(&definition.audience)
+    .bind(prompt)
+    .bind(&definition.kind)
+    .bind(definition.required)
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?;
+    for option_id in old_ids
+        .iter()
+        .filter(|option_id| !retained.contains(option_id))
+    {
+        sqlx::query("DELETE FROM form_options WHERE id = ?")
+            .bind(option_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    for (index, (option, label)) in req.options.iter().zip(labels.iter()).enumerate() {
+        let option_id = option.id.clone().unwrap_or_else(new_id);
+        sqlx::query("INSERT INTO form_options (id, question_id, label, sort_order) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, sort_order = excluded.sort_order")
+            .bind(option_id).bind(&id).bind(label).bind(index as i64).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    state
+        .sse
+        .notify(&organizer.event_id, ChangeKind::Composition);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_question(

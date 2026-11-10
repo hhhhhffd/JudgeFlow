@@ -27,7 +27,6 @@ const TABS = [
   { to: 'setup', label: cr.nav.setup },
   { to: 'questions', label: 'Вопросы' },
   { to: 'participants', label: 'Участники' },
-  { to: 'workflow', label: 'Этапы заданий' },
   { to: 'judges', label: cr.nav.judges },
   { to: 'results', label: cr.nav.results },
   { to: 'stage', label: cr.nav.stage },
@@ -132,7 +131,7 @@ function EventLayout() {
           <Route path="setup" element={<Setup />} />
           <Route path="questions" element={<TaskSettings section="questions" />} />
           <Route path="participants" element={<TaskSettings section="participants" />} />
-          <Route path="workflow" element={<TaskSettings section="workflow" />} />
+          <Route path="workflow" element={<Navigate to={`/events/${id}/questions`} replace />} />
           <Route path="judges" element={<JudgesSection />} />
           <Route path="results" element={<Results />} />
           <Route path="stage" element={<StageTab />} />

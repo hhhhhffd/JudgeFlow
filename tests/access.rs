@@ -274,6 +274,70 @@ async fn event_access_flow_teacher_then_student_then_jury() {
     .await;
     assert_eq!(locked.status, StatusCode::CONFLICT);
 
+    let edit_body = json!({
+        "audience": "teacher", "kind": "single_choice", "required": true, "prompt": "Уточнённый формат?",
+        "options": [
+            { "id": teacher_question.body["options"][0]["id"], "label": "Практика (уточнено)" },
+            { "id": teacher_question.body["options"][1]["id"], "label": "Исследование" }
+        ]
+    });
+    let question_url = format!(
+        "/api/access/questions/{}",
+        teacher_question.body["id"].as_str().unwrap()
+    );
+    let forbidden = send(
+        &fx.app,
+        Method::PATCH,
+        &question_url,
+        Some(edit_body.clone()),
+        Auth::Cookie(&teacher_cookie),
+    )
+    .await;
+    assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
+    let updated = send(
+        &fx.app,
+        Method::PATCH,
+        &question_url,
+        Some(edit_body.clone()),
+        Auth::Cookie(&organizer_cookie),
+    )
+    .await;
+    assert_eq!(updated.status, StatusCode::NO_CONTENT, "{:?}", updated.body);
+    let mut invalid = edit_body.clone();
+    invalid["options"][0]["id"] = Value::Null;
+    let deleted_selected = send(
+        &fx.app,
+        Method::PATCH,
+        &question_url,
+        Some(invalid),
+        Auth::Cookie(&organizer_cookie),
+    )
+    .await;
+    assert_eq!(deleted_selected.status, StatusCode::CONFLICT);
+    let mut invalid = edit_body.clone();
+    invalid["options"][0]["id"] = student_question.body["options"][0]["id"].clone();
+    let foreign_option = send(
+        &fx.app,
+        Method::PATCH,
+        &question_url,
+        Some(invalid),
+        Auth::Cookie(&organizer_cookie),
+    )
+    .await;
+    assert_eq!(foreign_option.status, StatusCode::BAD_REQUEST);
+    let mut invalid = edit_body;
+    invalid["kind"] = json!("text");
+    invalid["options"] = json!([]);
+    let incompatible = send(
+        &fx.app,
+        Method::PATCH,
+        &question_url,
+        Some(invalid),
+        Auth::Cookie(&organizer_cookie),
+    )
+    .await;
+    assert_eq!(incompatible.status, StatusCode::CONFLICT);
+
     let phase = send(
         &fx.app,
         Method::PATCH,
@@ -341,6 +405,85 @@ async fn event_access_flow_teacher_then_student_then_jury() {
             .any(|answer| answer["text"] == "Наше решение\nВторой абзац")
     );
     assert_eq!(workspace.body["questions"].as_array().unwrap().len(), 5);
+    let updated = workspace.body["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|question| question["id"] == teacher_question.body["id"])
+        .unwrap();
+    assert_eq!(updated["prompt"], "Уточнённый формат?");
+    assert_eq!(updated["options"][0]["label"], "Практика (уточнено)");
+    assert!(drafts.iter().any(
+        |answer| answer["question_id"] == teacher_question.body["id"]
+            && answer["option_ids"][0] == teacher_question.body["options"][0]["id"]
+    ));
+}
+
+#[tokio::test]
+async fn organizer_can_edit_question_type_audience_options_and_required_before_answers() {
+    let fx = Fixture::new(0, false).await;
+    let entered = fx
+        .admin(
+            Method::POST,
+            &format!("/events/{}/access/enter", fx.event_id),
+            None,
+        )
+        .await;
+    assert_eq!(entered.status, StatusCode::OK);
+    let cookie = entered.cookie();
+    let created = send(
+        &fx.app,
+        Method::POST,
+        "/api/access/questions",
+        Some(json!({
+            "audience": "teacher", "prompt": "Исходный вопрос", "options": ["A", "B"]
+        })),
+        Auth::Cookie(&cookie),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::OK);
+    let url = format!(
+        "/api/access/questions/{}",
+        created.body["id"].as_str().unwrap()
+    );
+    let changed = send(&fx.app, Method::PATCH, &url, Some(json!({
+        "audience": "student", "prompt": "Выберите несколько", "kind": "multiple_choice", "required": false,
+        "options": [{ "id": created.body["options"][0]["id"], "label": "Обновлённый A" }, { "label": "Новый C" }, { "label": "Новый D" }]
+    })), Auth::Cookie(&cookie)).await;
+    assert_eq!(changed.status, StatusCode::NO_CONTENT, "{:?}", changed.body);
+    let workspace = send(
+        &fx.app,
+        Method::GET,
+        "/api/access/workspace",
+        None,
+        Auth::Cookie(&cookie),
+    )
+    .await;
+    let question = &workspace.body["questions"][0];
+    assert_eq!(question["audience"], "student");
+    assert_eq!(question["kind"], "multiple_choice");
+    assert_eq!(question["required"], false);
+    assert_eq!(question["options"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        question["options"][0]["id"],
+        created.body["options"][0]["id"]
+    );
+    assert_eq!(question["options"][0]["label"], "Обновлённый A");
+    let changed = send(&fx.app, Method::PATCH, &url, Some(json!({
+        "audience": "teacher", "prompt": "Напишите сочинение", "kind": "text", "required": true, "options": []
+    })), Auth::Cookie(&cookie)).await;
+    assert_eq!(changed.status, StatusCode::NO_CONTENT);
+    let workspace = send(
+        &fx.app,
+        Method::GET,
+        "/api/access/workspace",
+        None,
+        Auth::Cookie(&cookie),
+    )
+    .await;
+    assert_eq!(workspace.body["questions"][0]["kind"], "text");
+    assert_eq!(workspace.body["questions"][0]["options"], json!([]));
+    assert_eq!(workspace.body["questions"][0]["required"], true);
 }
 
 #[tokio::test]

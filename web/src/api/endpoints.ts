@@ -45,6 +45,8 @@ export function createAccessApi(eventId?: T.Id) {
     rotateMagic: (id: T.Id) => call<{ magic_url: string }>(`/api/access/users/${id}/magic`, { method: 'POST' }),
     createQuestion: (body: { audience: 'teacher' | 'student'; prompt: string; kind: T.QuestionKind; required: boolean; options: string[] }) =>
       call<T.AccessQuestion>('/api/access/questions', { method: 'POST', body }),
+    updateQuestion: (id: T.Id, body: { audience: 'teacher' | 'student'; prompt: string; kind: T.QuestionKind; required: boolean; options: { id?: T.Id; label: string }[] }) =>
+      call<void>(`/api/access/questions/${id}`, { method: 'PATCH', body }),
     deleteQuestion: (id: T.Id) => call<void>(`/api/access/questions/${id}`, { method: 'DELETE' }),
     setPhase: (phase: T.WorkflowPhase) => call<{ phase: T.WorkflowPhase }>('/api/access/phase', { method: 'PATCH', body: { phase } }),
     resetWorkflow: () => call<{ phase: 'setup' }>('/api/access/reset', { method: 'POST' }),

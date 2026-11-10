@@ -35,7 +35,7 @@ The whole product is one Rust binary (`judgeflow`) with SQLite and an embedded R
 
 ## Team task workflow
 
-The organizer signs in with TOTP and manages the event in the usual JudgeFlow control room. Teams stay in **Setup**, account access is in **Participants**, forms are in **Questions**, and the teacher/student stages are in **Task stages**. The Questions tab contains only the question editor. Configure:
+The organizer signs in with TOTP and manages the event in the usual JudgeFlow control room. Teams stay in **Setup**, account access is in **Participants**, and forms are in **Questions**. Questions can be edited inline; the same page opens forms to teachers and then students, and closes response collection. Configure:
 
 1. teams and their teachers/students;
 2. jury accounts;
