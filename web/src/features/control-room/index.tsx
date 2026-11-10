@@ -20,10 +20,14 @@ import { Overview } from './overview'
 import { Results } from './results'
 import { Setup } from './setup'
 import { StageTab } from './stage'
+import { TaskSettings } from './task-settings'
 
 const TABS = [
   { to: '', label: cr.nav.overview, end: true },
   { to: 'setup', label: cr.nav.setup },
+  { to: 'questions', label: 'Вопросы' },
+  { to: 'participants', label: 'Участники' },
+  { to: 'workflow', label: 'Этапы заданий' },
   { to: 'judges', label: cr.nav.judges },
   { to: 'results', label: cr.nav.results },
   { to: 'stage', label: cr.nav.stage },
@@ -126,6 +130,9 @@ function EventLayout() {
         <Routes>
           <Route index element={<Overview />} />
           <Route path="setup" element={<Setup />} />
+          <Route path="questions" element={<TaskSettings section="questions" />} />
+          <Route path="participants" element={<TaskSettings section="participants" />} />
+          <Route path="workflow" element={<TaskSettings section="workflow" />} />
           <Route path="judges" element={<JudgesSection />} />
           <Route path="results" element={<Results />} />
           <Route path="stage" element={<StageTab />} />

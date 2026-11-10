@@ -1,4 +1,4 @@
-import { request } from './client'
+import { request, type RequestOptions } from './client'
 import type * as T from './types'
 
 const j = (token: string) => ({ token })
@@ -19,33 +19,42 @@ export const authApi = {
   me: () => request<T.AdminResponse>('/api/auth/me'),
 }
 
-export const accessApi = {
-  bootstrap: (eventId: T.Id, name: string) =>
-    request<T.AccessCredentials>(`/api/events/${eventId}/access/bootstrap`, { method: 'POST', body: { name } }),
-  enterAsOrganizer: (eventId: T.Id) =>
-    request<{ ok: true }>(`/api/events/${eventId}/access/enter`, { method: 'POST' }),
-  login: (eventId: T.Id, password: string) =>
-    request<{ ok: true }>(`/api/events/${eventId}/access/login`, { method: 'POST', body: { password } }),
-  magic: (token: string) => request<{ ok: true }>(`/api/access/magic/${encodeURIComponent(token)}`, { method: 'POST' }),
-  me: () => request<{ user: T.AccessUser }>('/api/access/me'),
-  logout: () => request<void>('/api/access/logout', { method: 'POST' }),
-  workspace: () => request<T.AccessWorkspace>('/api/access/workspace'),
-  createTeam: (name: string) => request<{ id: T.Id; name: string }>('/api/access/teams', { method: 'POST', body: { name } }),
-  deleteTeam: (id: T.Id) => request<void>(`/api/access/teams/${id}`, { method: 'DELETE' }),
-  createUser: (body: { name: string; role: T.AccessRole; team_id: T.Id | null }) =>
-    request<T.AccessCredentials>('/api/access/users', { method: 'POST', body }),
-  deleteUser: (id: T.Id) => request<void>(`/api/access/users/${id}`, { method: 'DELETE' }),
-  rotatePassword: (id: T.Id) => request<{ password: string }>(`/api/access/users/${id}/password`, { method: 'POST' }),
-  rotateMagic: (id: T.Id) => request<{ magic_url: string }>(`/api/access/users/${id}/magic`, { method: 'POST' }),
-  createQuestion: (body: { audience: 'teacher' | 'student'; prompt: string; kind: T.QuestionKind; required: boolean; options: string[] }) =>
-    request<T.AccessQuestion>('/api/access/questions', { method: 'POST', body }),
-  deleteQuestion: (id: T.Id) => request<void>(`/api/access/questions/${id}`, { method: 'DELETE' }),
-  setPhase: (phase: T.WorkflowPhase) => request<{ phase: T.WorkflowPhase }>('/api/access/phase', { method: 'PATCH', body: { phase } }),
-  resetWorkflow: () => request<{ phase: 'setup' }>('/api/access/reset', { method: 'POST' }),
-  saveTeamDraft: (answer: T.AccessAnswer) =>
-    request<void>('/api/access/team-draft', { method: 'PATCH', body: answer }),
-  submit: () => request<void>('/api/access/submit', { method: 'POST' }),
+/** An explicit event uses the admin's TOTP session, without switching the participant cookie. */
+export function createAccessApi(eventId?: T.Id) {
+  const call = <Response>(path: string, options: RequestOptions = {}) => request<Response>(path, {
+    ...options,
+    headers: { ...options.headers, ...(eventId ? { 'X-JudgeFlow-Event': eventId } : {}) },
+  })
+  return {
+    bootstrap: (eventId: T.Id, name: string) =>
+      call<T.AccessCredentials>(`/api/events/${eventId}/access/bootstrap`, { method: 'POST', body: { name } }),
+    enterAsOrganizer: (eventId: T.Id) =>
+      call<{ ok: true }>(`/api/events/${eventId}/access/enter`, { method: 'POST' }),
+    login: (eventId: T.Id, password: string) =>
+      call<{ ok: true }>(`/api/events/${eventId}/access/login`, { method: 'POST', body: { password } }),
+    magic: (token: string) => call<{ ok: true }>(`/api/access/magic/${encodeURIComponent(token)}`, { method: 'POST' }),
+    me: () => call<{ user: T.AccessUser }>('/api/access/me'),
+    logout: () => call<void>('/api/access/logout', { method: 'POST' }),
+    workspace: () => call<T.AccessWorkspace>('/api/access/workspace'),
+    createTeam: (name: string) => call<{ id: T.Id; name: string }>('/api/access/teams', { method: 'POST', body: { name } }),
+    deleteTeam: (id: T.Id) => call<void>(`/api/access/teams/${id}`, { method: 'DELETE' }),
+    createUser: (body: { name: string; role: T.AccessRole; team_id: T.Id | null }) =>
+      call<T.AccessCredentials>('/api/access/users', { method: 'POST', body }),
+    deleteUser: (id: T.Id) => call<void>(`/api/access/users/${id}`, { method: 'DELETE' }),
+    rotatePassword: (id: T.Id) => call<{ password: string }>(`/api/access/users/${id}/password`, { method: 'POST' }),
+    rotateMagic: (id: T.Id) => call<{ magic_url: string }>(`/api/access/users/${id}/magic`, { method: 'POST' }),
+    createQuestion: (body: { audience: 'teacher' | 'student'; prompt: string; kind: T.QuestionKind; required: boolean; options: string[] }) =>
+      call<T.AccessQuestion>('/api/access/questions', { method: 'POST', body }),
+    deleteQuestion: (id: T.Id) => call<void>(`/api/access/questions/${id}`, { method: 'DELETE' }),
+    setPhase: (phase: T.WorkflowPhase) => call<{ phase: T.WorkflowPhase }>('/api/access/phase', { method: 'PATCH', body: { phase } }),
+    resetWorkflow: () => call<{ phase: 'setup' }>('/api/access/reset', { method: 'POST' }),
+    saveTeamDraft: (answer: T.AccessAnswer) =>
+      call<void>('/api/access/team-draft', { method: 'PATCH', body: answer }),
+    submit: () => call<void>('/api/access/submit', { method: 'POST' }),
+  }
 }
+
+export const accessApi = createAccessApi()
 
 export const invitePublicApi = {
   get: (token: string) => request<T.InviteInfo>(`/api/invites/${encodeURIComponent(token)}`),

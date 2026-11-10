@@ -17,39 +17,14 @@ test('team forms: custom deletion confirmation, all question types and live coll
   await page.getByRole('button', { name: /Создать/ }).click()
   await expect(page.getByRole('heading', { name: 'Командные формы E2E' })).toBeVisible()
   await page.getByRole('link', { name: 'Настройка', exact: true }).click()
-  await page.getByRole('button', { name: 'Настроить задания' }).click()
-  await expect(page.getByRole('heading', { name: 'Команды, доступы и задания' })).toBeVisible()
-
-  const addTeam = async (name: string) => {
-    await page.getByPlaceholder('Новая команда').fill(name)
-    await page.getByRole('button', { name: 'Команда', exact: true }).click()
-    await expect(page.getByRole('button', { name: `Удалить команду ${name}`, exact: true })).toBeVisible()
-  }
-  for (const name of ['Проверка отмены', 'Проверка памяти', 'Альфа']) await addTeam(name)
-  await page.getByRole('button', { name: 'Удалить команду Проверка отмены', exact: true }).click()
+  await page.getByRole('button', { name: 'Добавить команду', exact: true }).click()
   const dialog = page.getByRole('dialog')
-  await expect(dialog).toBeVisible()
-  await page.screenshot({ path: test.info().outputPath('delete-confirmation.png') })
-  await dialog.getByLabel('Больше не спрашивать').check()
-  await dialog.getByRole('button', { name: 'Отмена', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Удалить команду Проверка отмены', exact: true })).toBeVisible()
-  expect(await page.evaluate(() => localStorage.getItem('jf.access.skip-delete-confirmation'))).toBeNull()
-  await page.getByRole('button', { name: 'Удалить команду Проверка отмены', exact: true }).click()
-  await expect(dialog.getByLabel('Больше не спрашивать')).not.toBeChecked()
-  await dialog.getByLabel('Больше не спрашивать').check()
-  await dialog.getByRole('button', { name: 'Удалить', exact: true }).click()
+  await dialog.getByLabel('Название', { exact: true }).fill('Альфа')
+  await dialog.getByRole('button', { name: 'Сохранить', exact: true }).click()
   await expect(dialog).not.toBeVisible()
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('jf.access.skip-delete-confirmation'))).toBe('true')
-  await page.reload()
-  await page.getByRole('button', { name: 'Удалить команду Проверка памяти', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Удалить команду Проверка памяти', exact: true })).toHaveCount(0)
-  await expect(dialog).not.toBeVisible()
-
-  await page.screenshot({ path: test.info().outputPath('question-editor-desktop.png'), fullPage: true })
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.screenshot({ path: test.info().outputPath('question-editor-mobile.png'), fullPage: true })
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.getByRole('link', { name: 'Участники', exact: true }).click()
+  await expect(page.getByLabel('Имя', { exact: true })).toBeVisible()
+  await expect(page.getByPlaceholder('Новая команда')).toHaveCount(0)
 
   const addUser = async (name: string, role: string) => {
     await page.getByLabel('Имя', { exact: true }).fill(name)
@@ -65,6 +40,26 @@ test('team forms: custom deletion confirmation, all question types and live coll
     await page.getByRole('button', { name: 'Готово', exact: true }).click()
     return link!
   }
+  await addUser('Проверка отмены', 'Жюри')
+  await addUser('Проверка памяти', 'Жюри')
+  await page.getByRole('button', { name: 'Удалить Проверка отмены', exact: true }).click()
+  await expect(dialog).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath('delete-confirmation.png') })
+  await dialog.getByLabel('Больше не спрашивать').check()
+  await dialog.getByRole('button', { name: 'Отмена', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Удалить Проверка отмены', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('jf.access.skip-delete-confirmation'))).toBeNull()
+  await page.getByRole('button', { name: 'Удалить Проверка отмены', exact: true }).click()
+  await expect(dialog.getByLabel('Больше не спрашивать')).not.toBeChecked()
+  await dialog.getByLabel('Больше не спрашивать').check()
+  await dialog.getByRole('button', { name: 'Удалить', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('jf.access.skip-delete-confirmation'))).toBe('true')
+  await page.reload()
+  await page.getByRole('button', { name: 'Удалить Проверка памяти', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Удалить Проверка памяти', exact: true })).toHaveCount(0)
+  await expect(dialog).not.toBeVisible()
+
   const links = {
     teacher: await addUser('Педагог первый', 'Педагог'),
     colleague: await addUser('Педагог второй', 'Педагог'),
@@ -76,6 +71,20 @@ test('team forms: custom deletion confirmation, all question types and live coll
   await page.getByRole('button', { name: 'Удалить Временный участник', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Удалить Временный участник', exact: true })).toHaveCount(0)
   await expect(dialog).not.toBeVisible()
+
+  await page.getByRole('link', { name: 'Вопросы', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Вопросы', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'Назад', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Добавить команду', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'Вопросы', exact: true }).click()
+  await expect(page.getByLabel('Имя', { exact: true })).toHaveCount(0)
+  await expect(page.getByPlaceholder('Новая команда')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /02 Педагоги/ })).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('question-editor-desktop.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: test.info().outputPath('question-editor-mobile.png'), fullPage: true })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.setViewportSize({ width: 1280, height: 720 })
 
   const addQuestion = async (audience: string, kind: string, prompt: string, required = true) => {
     await page.getByLabel('Для кого', { exact: true }).click()
@@ -103,6 +112,7 @@ test('team forms: custom deletion confirmation, all question types and live coll
   await page.getByRole('button', { name: 'Удалить вопрос Временный вопрос', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Удалить вопрос Временный вопрос', exact: true })).toHaveCount(0)
   await expect(dialog).not.toBeVisible()
+  expect((await page.context().cookies()).some((cookie) => cookie.name === 'jf_event_session')).toBe(false)
 
   const contexts: BrowserContext[] = []
   const open = async (link: string) => {
@@ -124,6 +134,7 @@ test('team forms: custom deletion confirmation, all question types and live coll
       await expect(target.getByRole('heading', { name: 'Задание пока закрыто' })).toBeVisible()
       await target.evaluate(() => { document.documentElement.dataset.noReload = 'preserved' })
     }
+    await page.getByRole('link', { name: 'Этапы заданий', exact: true }).click()
     await page.getByRole('button', { name: /02 Педагоги/ }).click()
     await expect(teacher.getByRole('heading', { name: 'Ответьте на вопросы' })).toBeVisible()
     const fillAndSubmit = async (first: Page, second: Page, audience: string) => {

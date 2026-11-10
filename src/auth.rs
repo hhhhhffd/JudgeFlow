@@ -136,6 +136,31 @@ impl FromRequestParts<AppState> for EventSession {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> AppResult<Self> {
+        if let Some(event_id) = parts.headers.get("x-judgeflow-event") {
+            let event_id = event_id
+                .to_str()
+                .map_err(|_| AppError::NotFound)?
+                .to_owned();
+            let admin = AdminSession::from_request_parts(parts, state).await?;
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE id = ?)")
+                    .bind(&event_id)
+                    .fetch_one(&state.pool)
+                    .await?;
+            if !exists {
+                return Err(AppError::NotFound);
+            }
+            return Ok(Self {
+                user: EventUser {
+                    id: admin.admin.id,
+                    event_id,
+                    team_id: None,
+                    name: admin.admin.name,
+                    role: "organizer".into(),
+                },
+                token_hash: admin.token_hash,
+            });
+        }
         let token = event_session_token(&parts.headers).ok_or(AppError::Unauthorized)?;
         let token_hash = hash_token(&token);
         let user = sqlx::query_as::<_, EventUser>(

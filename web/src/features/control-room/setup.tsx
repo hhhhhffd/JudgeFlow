@@ -1,8 +1,6 @@
 import { useId, useState, type ReactNode } from 'react'
-import { useMutation } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, ClipboardPaste, LayoutTemplate, Lock, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
-import { accessApi, eventsApi } from '@/api/endpoints'
+import { eventsApi } from '@/api/endpoints'
 import type { Criterion, Normalization, ScoringMode, Team, Track, UpdateEventRequest } from '@/api/types'
 import { EmptyState } from '@/components/state-views'
 import { Button } from '@/components/ui/button'
@@ -37,27 +35,11 @@ export function Setup() {
         </div>
       )}
       <BasicsCard />
-      <EventAccessCard />
       <RulesCard />
       <TracksCard />
       <TeamsCard />
       <CriteriaCard />
     </div>
-  )
-}
-
-function EventAccessCard() {
-  const { event } = useFull()
-  const navigate = useNavigate()
-  const enter = useMutation({
-    mutationFn: () => accessApi.enterAsOrganizer(event.id),
-    onSuccess: () => navigate('/event'),
-  })
-  return (
-    <Card title="Задания мероприятия" hint="Настройте команды, участников, вопросы и порядок прохождения этапов.">
-      <Button type="button" onClick={() => enter.mutate()} disabled={enter.isPending}>Настроить задания</Button>
-      {enter.isError && <p role="alert" className="mt-3 text-sm text-destructive">{errorText(enter.error)}</p>}
-    </Card>
   )
 }
 

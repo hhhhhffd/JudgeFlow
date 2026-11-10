@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Clipboard, KeyRound, LogOut, Plus, RotateCw, Trash2, Users } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { accessApi } from '@/api/endpoints'
 import type { AccessCredentials, AccessRole, AccessUser, AccessWorkspace, QuestionKind, WorkflowPhase } from '@/api/types'
@@ -43,6 +43,7 @@ export default function AccessWorkspacePage() {
   if (query.isPending) return <Skeleton className="m-8 h-48" />
   if (query.isError) return <div className="m-8"><ErrorState message={errorText(query.error)} onRetry={() => void query.refetch()} /></div>
   const workspace = query.data
+  if (workspace.current_user.role === 'organizer') return <Navigate to={`/events/${workspace.event.id}/questions`} replace />
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card/90 backdrop-blur">
@@ -61,7 +62,6 @@ export default function AccessWorkspacePage() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        {workspace.current_user.role === 'organizer' && <OrganizerWorkspace data={workspace} />}
         {workspace.current_user.role === 'jury' && <JuryWorkspace data={workspace} />}
         {(workspace.current_user.role === 'teacher' || workspace.current_user.role === 'student') && (
           <ParticipantWorkspace
@@ -74,23 +74,18 @@ export default function AccessWorkspacePage() {
   )
 }
 
-function useRefresh() {
-  const client = useQueryClient()
-  return () => client.invalidateQueries({ queryKey: ['access-workspace'] })
+interface SettingsProps {
+  data: AccessWorkspace
+  api: typeof accessApi
+  refresh: () => Promise<unknown>
 }
 
-function OrganizerWorkspace({ data }: { data: AccessWorkspace }) {
-  const refresh = useRefresh()
-  const [credentials, setCredentials] = useState<AccessCredentials | null>(null)
-  const phase = useMutation({ mutationFn: accessApi.setPhase, onSuccess: refresh })
-  const reset = useMutation({ mutationFn: accessApi.resetWorkflow, onSuccess: refresh })
+export function WorkflowSettings({ data, api, refresh }: SettingsProps) {
+  const phase = useMutation({ mutationFn: api.setPhase, onSuccess: refresh })
+  const reset = useMutation({ mutationFn: api.resetWorkflow, onSuccess: refresh })
   const index = phases.findIndex((item) => item.value === data.event.phase)
   return (
     <div className="grid gap-6">
-      <section>
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Управление мероприятием</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Команды, доступы и задания</h1>
-      </section>
       <div className="grid grid-cols-2 overflow-hidden rounded-xl border bg-card sm:grid-cols-4">
         {phases.map((item, itemIndex) => (
           <button
@@ -111,11 +106,6 @@ function OrganizerWorkspace({ data }: { data: AccessWorkspace }) {
         </div>
       )}
       {(phase.isError || reset.isError) && <p role="alert" className="text-sm text-destructive">{errorText((phase.error || reset.error)!)}</p>}
-      {credentials && <CredentialsPanel credentials={credentials} onClose={() => setCredentials(null)} />}
-      <div className="grid gap-6 xl:grid-cols-2">
-        <PeopleCard data={data} onCredentials={setCredentials} />
-        <QuestionsCard data={data} />
-      </div>
     </div>
   )
 }
@@ -134,38 +124,34 @@ function CredentialsPanel({ credentials, onClose }: { credentials: AccessCredent
   )
 }
 
-function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredentials: (value: AccessCredentials) => void }) {
-  const refresh = useRefresh()
-  const [teamName, setTeamName] = useState('')
+export function ParticipantsSettings({ data, api, refresh }: SettingsProps) {
+  const [credentials, setCredentials] = useState<AccessCredentials | null>(null)
   const [name, setName] = useState('')
   const [role, setRole] = useState<AccessRole>('teacher')
   const [teamId, setTeamId] = useState<string>('')
-  const createTeam = useMutation({ mutationFn: accessApi.createTeam, onSuccess: () => { setTeamName(''); void refresh() } })
-  const deleteTeam = useMutation({ mutationFn: accessApi.deleteTeam, onSuccess: refresh })
   const createUser = useMutation({
-    mutationFn: accessApi.createUser,
-    onSuccess: (result) => { setName(''); onCredentials(result); void refresh() },
+    mutationFn: api.createUser,
+    onSuccess: (result) => { setName(''); setCredentials(result); void refresh() },
   })
-  const deleteUser = useMutation({ mutationFn: accessApi.deleteUser, onSuccess: refresh })
+  const deleteUser = useMutation({ mutationFn: api.deleteUser, onSuccess: refresh })
   const rotatePassword = useMutation({
-    mutationFn: async (user: AccessUser) => ({ user, result: await accessApi.rotatePassword(user.id) }),
-    onSuccess: ({ user, result }) => onCredentials({ user, password: result.password, magic_url: 'Magic-ссылка не изменялась' }),
+    mutationFn: async (user: AccessUser) => ({ user, result: await api.rotatePassword(user.id) }),
+    onSuccess: ({ user, result }) => setCredentials({ user, password: result.password, magic_url: 'Magic-ссылка не изменялась' }),
   })
   const rotateMagic = useMutation({
-    mutationFn: async (user: AccessUser) => ({ user, result: await accessApi.rotateMagic(user.id) }),
-    onSuccess: ({ user, result }) => onCredentials({ user, password: 'Пароль не изменялся', magic_url: result.magic_url }),
+    mutationFn: async (user: AccessUser) => ({ user, result: await api.rotateMagic(user.id) }),
+    onSuccess: ({ user, result }) => setCredentials({ user, password: 'Пароль не изменялся', magic_url: result.magic_url }),
   })
   const teamRequired = role === 'teacher' || role === 'student'
   return (
+    <div className="grid gap-6">
+    {credentials && <CredentialsPanel credentials={credentials} onClose={() => setCredentials(null)} />}
     <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><Users className="size-5" />Команды и люди</CardTitle><CardDescription>У каждого человека собственный пароль и magic-ссылка.</CardDescription></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2"><Users className="size-5" />Участники</CardTitle><CardDescription>Педагоги, студенты и жюри. У каждого собственный пароль и персональная ссылка.</CardDescription></CardHeader>
       <CardContent className="grid gap-5">
+        <p className="text-sm text-muted-foreground">Команды добавляются в <Link className="underline underline-offset-4" to={`/events/${data.event.id}/setup`}>настройке мероприятия</Link>.</p>
         {data.event.phase === 'setup' && (
           <>
-            <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); createTeam.mutate(teamName) }}>
-              <Input aria-label="Название новой команды" required maxLength={200} placeholder="Новая команда" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
-              <Button type="submit" variant="secondary" disabled={!teamName.trim() || createTeam.isPending}><Plus className="size-4" />Команда</Button>
-            </form>
             <form
               className="grid gap-3 rounded-lg border bg-muted/35 p-3 sm:grid-cols-2"
               onSubmit={(event) => { event.preventDefault(); createUser.mutate({ name, role, team_id: teamRequired ? teamId || null : null }) }}
@@ -175,22 +161,11 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
               <div className="grid gap-1.5"><Label>Команда</Label><Select value={teamId || '__none__'} onValueChange={(value) => setTeamId(value === '__none__' ? '' : value)} disabled={!teamRequired}><SelectTrigger><SelectValue placeholder="Выберите" /></SelectTrigger><SelectContent><SelectItem value="__none__">Без команды</SelectItem>{data.teams.map((team) => <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>)}</SelectContent></Select></div>
               <Button type="submit" className="sm:col-span-2" disabled={!name.trim() || (teamRequired && !teamId) || createUser.isPending}>Создать и показать доступ</Button>
             </form>
-            {data.teams.length > 0 && (
-              <div className="grid gap-2">
-                <p className="text-sm font-medium">Команды</p>
-                {data.teams.map((team) => (
-                  <div key={team.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                    <span className="text-sm">{team.name}</span>
-                    <DeleteButton label={`Удалить команду ${team.name}`} title={`Удалить команду «${team.name}»?`} description="Команду можно удалить, если в ней нет участников." onDelete={() => deleteTeam.mutateAsync(team.id)} />
-                  </div>
-                ))}
-              </div>
-            )}
           </>
         )}
-        {(createTeam.isError || createUser.isError || deleteTeam.isError || deleteUser.isError) && <p role="alert" className="text-sm text-destructive">{errorText((createTeam.error || createUser.error || deleteTeam.error || deleteUser.error)!)}</p>}
+        {(createUser.isError || deleteUser.isError) && <p role="alert" className="text-sm text-destructive">{errorText((createUser.error || deleteUser.error)!)}</p>}
         <div className="divide-y rounded-lg border">
-          {data.users.map((user) => {
+          {data.users.filter((user) => user.role !== 'organizer').map((user) => {
             const team = data.teams.find((item) => item.id === user.team_id)
             return (
               <div key={user.id} className="flex flex-wrap items-center justify-between gap-3 p-3">
@@ -207,21 +182,21 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
         </div>
       </CardContent>
     </Card>
+    </div>
   )
 }
 
-function QuestionsCard({ data }: { data: AccessWorkspace }) {
-  const refresh = useRefresh()
+export function QuestionsSettings({ data, api, refresh }: SettingsProps) {
   const [audience, setAudience] = useState<'teacher' | 'student'>('teacher')
   const [kind, setKind] = useState<QuestionKind>('single_choice')
   const [required, setRequired] = useState(true)
   const [prompt, setPrompt] = useState('')
   const [options, setOptions] = useState(['', ''])
   const create = useMutation({
-    mutationFn: accessApi.createQuestion,
+    mutationFn: api.createQuestion,
     onSuccess: () => { setPrompt(''); setOptions(['', '']); void refresh() },
   })
-  const remove = useMutation({ mutationFn: accessApi.deleteQuestion, onSuccess: refresh })
+  const remove = useMutation({ mutationFn: api.deleteQuestion, onSuccess: refresh })
   const submit = (event: FormEvent) => {
     event.preventDefault()
     create.mutate({ audience, prompt, kind, required, options: kind === 'text' ? [] : options.map((item) => item.trim()) })

@@ -1,8 +1,11 @@
 mod common;
 
-use axum::http::{Method, StatusCode};
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode};
 use common::{Auth, Fixture, send};
+use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use tower::ServiceExt;
 
 async fn login(app: &axum::Router, event_id: &str, password: &str) -> String {
     let response = send(
@@ -423,4 +426,68 @@ async fn question_type_migration_preserves_existing_answers() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn admin_task_settings_require_totp_session_and_keep_event_scope() {
+    let fx = Fixture::new(0, false).await;
+    let second = fx
+        .admin(
+            Method::POST,
+            "/events",
+            Some(json!({ "title": "Second event" })),
+        )
+        .await;
+    assert_eq!(second.status, StatusCode::OK);
+    let second_id = second.body["event"]["id"].as_str().unwrap();
+    for (event_id, cookie, expected) in [
+        (fx.event_id.as_str(), "", StatusCode::UNAUTHORIZED),
+        ("missing", fx.cookie.as_str(), StatusCode::NOT_FOUND),
+        (fx.event_id.as_str(), fx.cookie.as_str(), StatusCode::OK),
+        (second_id, fx.cookie.as_str(), StatusCode::OK),
+        (fx.event_id.as_str(), fx.cookie.as_str(), StatusCode::OK),
+    ] {
+        let response = fx
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/access/workspace")
+                    .header("x-judgeflow-event", event_id)
+                    .header("cookie", cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert!(response.headers().get("set-cookie").is_none());
+        if expected == StatusCode::OK {
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let workspace: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(workspace["event"]["id"], event_id);
+            assert_eq!(workspace["current_user"]["role"], "organizer");
+        }
+    }
+    let response = fx.app.clone().oneshot(Request::builder()
+        .method(Method::POST)
+        .uri("/api/access/questions")
+        .header("content-type", "application/json")
+        .header("x-judgeflow-event", second_id)
+        .header("cookie", &fx.cookie)
+        .body(Body::from(json!({ "audience": "teacher", "kind": "text", "prompt": "Question in second event" }).to_string())).unwrap())
+        .await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM form_questions WHERE event_id = ?")
+        .bind(&fx.event_id)
+        .fetch_one(&fx.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM form_questions WHERE event_id = ?")
+        .bind(second_id)
+        .fetch_one(&fx.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
 }

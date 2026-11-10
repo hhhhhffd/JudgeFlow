@@ -35,14 +35,14 @@ The whole product is one Rust binary (`judgeflow`) with SQLite and an embedded R
 
 ## Team task workflow
 
-The platform owner creates an event in the usual JudgeFlow control room. In **Setup → Event organizer access**, create the event organizer and copy the one-time credentials. The organizer then opens `/<event-id>/auth` (password only) or their magic link and configures:
+The organizer signs in with TOTP and manages the event in the usual JudgeFlow control room. Teams stay in **Setup**, account access is in **Participants**, forms are in **Questions**, and the teacher/student stages are in **Task stages**. The Questions tab contains only the question editor. Configure:
 
 1. teams and their teachers/students;
 2. jury accounts;
 3. separate forms for teachers and students, with single-choice, multiple-choice and long-text questions (required or optional);
 4. the workflow stages `setup → teachers → students → finished`.
 
-Every user has an independent generated password and revocable magic link. Passwords use Argon2; only token hashes are stored. Teacher and student teammates edit shared answers with the latest editor shown. Open workspaces use WebSockets, so shared answers, stage changes and jury progress update in place without a page reload.
+Jury members, teachers and students sign in at `/<event-id>/auth` with their independent generated password, or with a revocable magic link. Passwords use Argon2; only token hashes are stored. Teacher and student teammates edit shared answers with the latest editor shown. Open participant workspaces use WebSockets, so shared answers, stage changes and jury progress update in place without a page reload.
 
 ## Technical stack
 
