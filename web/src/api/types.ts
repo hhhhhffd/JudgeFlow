@@ -2,6 +2,8 @@
 // IDs are UUID strings, timestamps are Unix ms, scores are integers in hundredths (`*_x100`).
 
 export type Id = string
+export type AccessRole = 'organizer' | 'jury' | 'teacher' | 'student'
+export type WorkflowPhase = 'setup' | 'teachers' | 'students' | 'finished'
 export type Role = 'owner' | 'admin'
 export type EventStatus = 'draft' | 'judging' | 'locked' | 'finalized' | 'published'
 export type ScoringMode = 'team' | 'criterion' | 'pairwise'
@@ -20,6 +22,49 @@ export interface Admin {
 }
 export interface AdminResponse {
   admin: Admin
+}
+
+export interface AccessUser {
+  id: Id
+  event_id?: Id
+  team_id: Id | null
+  name: string
+  role: AccessRole
+  submitted?: boolean
+  submitted_at?: number | null
+}
+export interface AccessQuestionOption {
+  id: Id
+  label: string
+}
+export interface AccessQuestion {
+  id: Id
+  audience: 'teacher' | 'student'
+  prompt: string
+  options: AccessQuestionOption[]
+}
+export interface AccessWorkspace {
+  event: { id: Id; title: string; phase: WorkflowPhase }
+  current_user: AccessUser
+  teams: { id: Id; name: string }[]
+  users: AccessUser[]
+  questions: AccessQuestion[]
+  team_draft: {
+    team_id: Id
+    audience: 'teacher' | 'student'
+    question_id: Id
+    option_id: Id
+    edited_by: Id
+    edited_by_name: string
+    updated_at: number
+    submitted: boolean
+  }[]
+}
+export interface AccessCredentials {
+  user: AccessUser
+  password: string
+  magic_url: string
+  login_url?: string
 }
 
 // ---- setup / auth ----

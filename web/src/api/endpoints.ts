@@ -19,6 +19,29 @@ export const authApi = {
   me: () => request<T.AdminResponse>('/api/auth/me'),
 }
 
+export const accessApi = {
+  bootstrap: (eventId: T.Id, name: string) =>
+    request<T.AccessCredentials>(`/api/events/${eventId}/access/bootstrap`, { method: 'POST', body: { name } }),
+  login: (eventId: T.Id, password: string) =>
+    request<{ ok: true }>(`/api/events/${eventId}/access/login`, { method: 'POST', body: { password } }),
+  magic: (token: string) => request<{ ok: true }>(`/api/access/magic/${encodeURIComponent(token)}`, { method: 'POST' }),
+  me: () => request<{ user: T.AccessUser }>('/api/access/me'),
+  logout: () => request<void>('/api/access/logout', { method: 'POST' }),
+  workspace: () => request<T.AccessWorkspace>('/api/access/workspace'),
+  createTeam: (name: string) => request<{ id: T.Id; name: string }>('/api/access/teams', { method: 'POST', body: { name } }),
+  createUser: (body: { name: string; role: T.AccessRole; team_id: T.Id | null }) =>
+    request<T.AccessCredentials>('/api/access/users', { method: 'POST', body }),
+  rotatePassword: (id: T.Id) => request<{ password: string }>(`/api/access/users/${id}/password`, { method: 'POST' }),
+  rotateMagic: (id: T.Id) => request<{ magic_url: string }>(`/api/access/users/${id}/magic`, { method: 'POST' }),
+  createQuestion: (body: { audience: 'teacher' | 'student'; prompt: string; options: string[] }) =>
+    request<T.AccessQuestion>('/api/access/questions', { method: 'POST', body }),
+  deleteQuestion: (id: T.Id) => request<void>(`/api/access/questions/${id}`, { method: 'DELETE' }),
+  setPhase: (phase: T.WorkflowPhase) => request<{ phase: T.WorkflowPhase }>('/api/access/phase', { method: 'PATCH', body: { phase } }),
+  saveTeamDraft: (question_id: T.Id, option_id: T.Id) =>
+    request<void>('/api/access/team-draft', { method: 'PATCH', body: { question_id, option_id } }),
+  submit: (answers: { question_id: T.Id; option_id: T.Id }[]) => request<void>('/api/access/submit', { method: 'POST', body: { answers } }),
+}
+
 export const invitePublicApi = {
   get: (token: string) => request<T.InviteInfo>(`/api/invites/${encodeURIComponent(token)}`),
   begin: (token: string, body: { name: string }) =>

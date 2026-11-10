@@ -14,6 +14,9 @@ const ControlRoom = lazy(() => import('@/features/control-room'))
 const JudgeDesk = lazy(() => import('@/features/judge'))
 const StageScreen = lazy(() => import('@/features/stage'))
 const LiveBoard = lazy(() => import('@/features/live'))
+const AccessAuthPage = lazy(() => import('@/features/access/auth-page'))
+const AccessMagicPage = lazy(() => import('@/features/access/magic-page'))
+const AccessWorkspace = lazy(() => import('@/features/access/workspace'))
 
 const fallback = <Skeleton className="m-6 h-40" />
 
@@ -24,6 +27,9 @@ export function AppRoutes() {
         <Route path="/firststart" element={<FirstStartPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/invite/:token" element={<InvitePage />} />
+        <Route path="/:eventId/auth" element={<AccessAuthPage />} />
+        <Route path="/m/:token" element={<AccessMagicPage />} />
+        <Route path="/event" element={<AccessWorkspace />} />
 
         <Route element={<AdminShell />}>
           <Route index element={<EventsPage />} />

@@ -31,6 +31,18 @@ The whole product is one Rust binary (`judgeflow`) with SQLite and an embedded R
 - **Two judging modes:** rubric criteria with weights, and pairwise comparison ranked with Bradley-Terry; tracks, rounds and optional judge score centering.
 - **Live and Stage Mode:** public leaderboard over SSE and a projector screen with a controlled winner reveal (3rd, 2nd, 1st).
 - **Access control:** TOTP-only admin login, hashed judge tokens that can be revoked and reissued, security headers, per-IP rate limiting.
+- **Team task workflow:** an event organizer creates teams, personal password/magic-link access for jury, teachers and students, and Google-Forms-style questions. Teachers collaborate on one team form and submit it first; students then collaborate on their own team form. Jury sees live “done / not done” status without scoring.
+
+## Team task workflow
+
+The platform owner creates an event in the usual JudgeFlow control room. In **Setup → Event organizer access**, create the event organizer and copy the one-time credentials. The organizer then opens `/<event-id>/auth` (password only) or their magic link and configures:
+
+1. teams and their teachers/students;
+2. jury accounts;
+3. separate multiple-choice forms for teachers and students;
+4. the workflow stages `setup → teachers → students → finished`.
+
+Every user has an independent generated password and revocable magic link. Passwords use Argon2; only token hashes are stored. Teacher and student teammates edit shared answers with the latest editor shown. Open workspaces use WebSockets, so shared answers, stage changes and jury progress update in place without a page reload.
 
 ## Technical stack
 

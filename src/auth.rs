@@ -21,6 +21,7 @@ use crate::totp;
 use crate::util::now_ms;
 
 pub const SESSION_COOKIE: &str = "jf_session";
+pub const EVENT_SESSION_COOKIE: &str = "jf_event_session";
 pub const SESSION_TTL_MS: i64 = 14 * 24 * 60 * 60 * 1000;
 const NAME_MAX_CHARS: usize = 64;
 
@@ -98,6 +99,10 @@ pub fn clear_session_cookie(config: &Config, headers: &HeaderMap) -> String {
 
 /// Raw session token from the `Cookie` header(s), if any.
 pub fn session_token(headers: &HeaderMap) -> Option<String> {
+    cookie_token(headers, SESSION_COOKIE)
+}
+
+fn cookie_token(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
     headers
         .get_all(COOKIE)
         .iter()
@@ -105,8 +110,46 @@ pub fn session_token(headers: &HeaderMap) -> Option<String> {
         .flat_map(|v| v.split(';'))
         .find_map(|pair| {
             let (name, value) = pair.trim().split_once('=')?;
-            (name == SESSION_COOKIE && !value.is_empty()).then(|| value.to_string())
+            (name == cookie_name && !value.is_empty()).then(|| value.to_string())
         })
+}
+
+pub fn event_session_token(headers: &HeaderMap) -> Option<String> {
+    cookie_token(headers, EVENT_SESSION_COOKIE)
+}
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct EventUser {
+    pub id: String,
+    pub event_id: String,
+    pub team_id: Option<String>,
+    pub name: String,
+    pub role: String,
+}
+
+pub struct EventSession {
+    pub user: EventUser,
+    pub token_hash: String,
+}
+
+impl FromRequestParts<AppState> for EventSession {
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> AppResult<Self> {
+        let token = event_session_token(&parts.headers).ok_or(AppError::Unauthorized)?;
+        let token_hash = hash_token(&token);
+        let user = sqlx::query_as::<_, EventUser>(
+            "SELECT u.id, u.event_id, u.team_id, u.name, u.role FROM event_sessions s \
+             JOIN event_users u ON u.id = s.user_id \
+             WHERE s.token_hash = ? AND s.expires_at > ? AND u.is_active = 1",
+        )
+        .bind(&token_hash)
+        .bind(now_ms())
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+        Ok(Self { user, token_hash })
+    }
 }
 
 /// Extractor for admin endpoints: valid, unexpired `jf_session` cookie. Else 401.

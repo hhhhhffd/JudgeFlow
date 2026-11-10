@@ -13,6 +13,7 @@ use crate::error::AppError;
 use crate::state::AppState;
 use crate::static_files;
 
+pub mod access;
 pub mod admins;
 pub mod assignments;
 pub mod auth;
@@ -68,6 +69,7 @@ async fn security_headers(mut response: Response) -> Response {
 /// All API routes. New feature modules (events, judge, public, ...) are added with `.merge(...)`.
 fn api() -> Router<AppState> {
     Router::new()
+        .merge(access::router())
         .merge(setup::router())
         .merge(auth::router())
         .merge(admins::router())
