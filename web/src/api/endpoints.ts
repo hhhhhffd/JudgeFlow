@@ -31,8 +31,10 @@ export const accessApi = {
   logout: () => request<void>('/api/access/logout', { method: 'POST' }),
   workspace: () => request<T.AccessWorkspace>('/api/access/workspace'),
   createTeam: (name: string) => request<{ id: T.Id; name: string }>('/api/access/teams', { method: 'POST', body: { name } }),
+  deleteTeam: (id: T.Id) => request<void>(`/api/access/teams/${id}`, { method: 'DELETE' }),
   createUser: (body: { name: string; role: T.AccessRole; team_id: T.Id | null }) =>
     request<T.AccessCredentials>('/api/access/users', { method: 'POST', body }),
+  deleteUser: (id: T.Id) => request<void>(`/api/access/users/${id}`, { method: 'DELETE' }),
   rotatePassword: (id: T.Id) => request<{ password: string }>(`/api/access/users/${id}/password`, { method: 'POST' }),
   rotateMagic: (id: T.Id) => request<{ magic_url: string }>(`/api/access/users/${id}/magic`, { method: 'POST' }),
   createQuestion: (body: { audience: 'teacher' | 'student'; prompt: string; options: string[] }) =>

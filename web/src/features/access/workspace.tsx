@@ -134,10 +134,12 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
   const [role, setRole] = useState<AccessRole>('teacher')
   const [teamId, setTeamId] = useState<string>('')
   const createTeam = useMutation({ mutationFn: accessApi.createTeam, onSuccess: () => { setTeamName(''); void refresh() } })
+  const deleteTeam = useMutation({ mutationFn: accessApi.deleteTeam, onSuccess: refresh })
   const createUser = useMutation({
     mutationFn: accessApi.createUser,
     onSuccess: (result) => { setName(''); onCredentials(result); void refresh() },
   })
+  const deleteUser = useMutation({ mutationFn: accessApi.deleteUser, onSuccess: refresh })
   const rotatePassword = useMutation({
     mutationFn: async (user: AccessUser) => ({ user, result: await accessApi.rotatePassword(user.id) }),
     onSuccess: ({ user, result }) => onCredentials({ user, password: result.password, magic_url: 'Magic-ссылка не изменялась' }),
@@ -166,9 +168,20 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
               <div className="grid gap-1.5"><Label>Команда</Label><Select value={teamId || '__none__'} onValueChange={(value) => setTeamId(value === '__none__' ? '' : value)} disabled={!teamRequired}><SelectTrigger><SelectValue placeholder="Выберите" /></SelectTrigger><SelectContent><SelectItem value="__none__">Без команды</SelectItem>{data.teams.map((team) => <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>)}</SelectContent></Select></div>
               <Button type="submit" className="sm:col-span-2" disabled={!name.trim() || (teamRequired && !teamId) || createUser.isPending}>Создать и показать доступ</Button>
             </form>
+            {data.teams.length > 0 && (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium">Команды</p>
+                {data.teams.map((team) => (
+                  <div key={team.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                    <span className="text-sm">{team.name}</span>
+                    <Button size="icon" variant="ghost" aria-label={`Удалить команду ${team.name}`} onClick={() => deleteTeam.mutate(team.id)}><Trash2 className="size-4 text-destructive" /></Button>
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
-        {(createTeam.isError || createUser.isError) && <p role="alert" className="text-sm text-destructive">{errorText((createTeam.error || createUser.error)!)}</p>}
+        {(createTeam.isError || createUser.isError || deleteTeam.isError || deleteUser.isError) && <p role="alert" className="text-sm text-destructive">{errorText((createTeam.error || createUser.error || deleteTeam.error || deleteUser.error)!)}</p>}
         <div className="divide-y rounded-lg border">
           {data.users.map((user) => {
             const team = data.teams.find((item) => item.id === user.team_id)
@@ -179,6 +192,7 @@ function PeopleCard({ data, onCredentials }: { data: AccessWorkspace; onCredenti
                   {(user.role === 'teacher' || user.role === 'student') && <Badge variant={user.submitted ? 'default' : 'secondary'}>{user.submitted ? 'Сдано' : 'Не сдано'}</Badge>}
                   <Button size="icon" variant="ghost" aria-label={`Новый пароль для ${user.name}`} onClick={() => rotatePassword.mutate(user)}><KeyRound className="size-4" /></Button>
                   <Button size="icon" variant="ghost" aria-label={`Новая ссылка для ${user.name}`} onClick={() => rotateMagic.mutate(user)}><RotateCw className="size-4" /></Button>
+                  {data.event.phase === 'setup' && user.role !== 'organizer' && <Button size="icon" variant="ghost" aria-label={`Удалить ${user.name}`} onClick={() => deleteUser.mutate(user.id)}><Trash2 className="size-4 text-destructive" /></Button>}
                 </div>
               </div>
             )

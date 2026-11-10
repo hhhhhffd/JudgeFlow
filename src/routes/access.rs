@@ -38,7 +38,9 @@ pub fn router() -> Router<AppState> {
         .route("/access/stream", get(stream))
         .route("/access/ws", get(websocket))
         .route("/access/teams", post(create_team))
+        .route("/access/teams/{id}", axum::routing::delete(delete_team))
         .route("/access/users", post(create_user))
+        .route("/access/users/{id}", axum::routing::delete(delete_user))
         .route("/access/users/{id}/password", post(rotate_password))
         .route("/access/users/{id}/magic", post(rotate_magic))
         .route("/access/questions", post(create_question))
@@ -468,6 +470,74 @@ async fn create_team(
     tx.commit().await?;
     state.sse.notify(&user.event_id, ChangeKind::Composition);
     Ok(Json(json!({ "id": id, "name": name })))
+}
+
+async fn delete_team(
+    State(state): State<AppState>,
+    session: EventSession,
+    Path(team_id): Path<String>,
+) -> AppResult<StatusCode> {
+    let user = organizer(&session)?;
+    let mut tx = begin_write(&state.pool).await?;
+    if event_phase(&mut tx, &user.event_id).await? != "setup" {
+        return Err(AppError::InvalidState(
+            "Команды можно удалять только на этапе настройки".into(),
+            None,
+        ));
+    }
+    let members: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM event_users WHERE team_id = ? AND event_id = ? AND is_active = 1",
+    )
+    .bind(&team_id)
+    .bind(&user.event_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if members > 0 {
+        return Err(AppError::Conflict(
+            "Сначала удалите участников этой команды".into(),
+        ));
+    }
+    let result = sqlx::query("DELETE FROM teams WHERE id = ? AND event_id = ?")
+        .bind(&team_id)
+        .bind(&user.event_id)
+        .execute(&mut *tx)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    tx.commit().await?;
+    state.sse.notify(&user.event_id, ChangeKind::Composition);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_user(
+    State(state): State<AppState>,
+    session: EventSession,
+    Path(user_id): Path<String>,
+) -> AppResult<StatusCode> {
+    let organizer = organizer(&session)?;
+    let mut tx = begin_write(&state.pool).await?;
+    if event_phase(&mut tx, &organizer.event_id).await? != "setup" {
+        return Err(AppError::InvalidState(
+            "Участников можно удалять только на этапе настройки".into(),
+            None,
+        ));
+    }
+    let result = sqlx::query(
+        "DELETE FROM event_users WHERE id = ? AND event_id = ? AND role != 'organizer'",
+    )
+    .bind(&user_id)
+    .bind(&organizer.event_id)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+    tx.commit().await?;
+    state
+        .sse
+        .notify(&organizer.event_id, ChangeKind::Composition);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn create_user(
